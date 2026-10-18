@@ -41,6 +41,19 @@
         a { color: var(--accent-2); }
         .error { color: var(--danger); margin-top: 12px; }
         [hidden] { display: none !important; }
+        .privacy { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 18px; }
+        .privacy h2 { font-size: 1.05rem; margin: 0 0 4px; }
+        .row { display: flex; align-items: flex-start; gap: 10px; margin: 10px 0; cursor: pointer; }
+        .row input { margin-top: 4px; accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
+        .row small { display: block; color: var(--muted); }
+        .libs { margin: 6px 0 4px 28px; }
+        .libs .row { margin: 6px 0; }
+        input[type=text] {
+            width: 100%; font: inherit; color: var(--text); background: transparent;
+            border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-top: 6px;
+        }
+        .saved { color: #3ecf8e; font-size: .9rem; margin-left: 8px; }
+        button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); width: auto; padding: 8px 16px; margin-top: 12px; }
     </style>
 </head>
 <body>
@@ -79,6 +92,20 @@
 
     <div class="error" id="error" hidden></div>
 
+    <section class="privacy" id="privacy" hidden>
+        <h2>Your privacy</h2>
+        <p class="sub">Private items only show "Watching <span class="serverName">the server</span>": no title, poster or progress.</p>
+        <label class="row"><input type="checkbox" id="alwaysPrivate"><span>Keep everything private<small>Never show what I'm playing, only that I'm on <span class="serverName">the server</span>.</small></span></label>
+        <div id="libsWrap">
+            <div class="sub" style="margin:14px 0 0">Private libraries</div>
+            <div class="libs" id="libs"></div>
+            <label for="tags" class="sub" style="display:block;margin-top:14px">My private tags (comma-separated)</label>
+            <input type="text" id="tags" placeholder="e.g. guilty-pleasure, anime">
+            <p class="sub" id="adminRules" style="font-size:.85rem;margin-top:10px"></p>
+        </div>
+        <button class="ghost" id="saveBtn">Save</button><span class="saved" id="saved" hidden>Saved</span>
+    </section>
+
     <p class="note">
         Discord has no presence-only permission. The one Jellycord uses
         (<code>sdk.social_layer_presence</code>) also lets the app read and manage your friends list.
@@ -94,6 +121,49 @@
     var base = location.pathname.replace(/\/Jellycord\/Link\/?$/i, '');
     var auth = null;
     var pollTimer = null;
+    var userId = null;
+
+    function apiJson(method, path, body) {
+        return fetch(base + path, {
+            method: method,
+            headers: { 'Authorization': auth, 'Content-Type': 'application/json' },
+            body: body ? JSON.stringify(body) : undefined
+        }).then(function (r) {
+            if (!r.ok) { throw new Error('HTTP ' + r.status); }
+            return r.json();
+        });
+    }
+
+    function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+
+    function loadPrivacy() {
+        Promise.all([
+            apiJson('GET', '/Jellycord/Me/Settings'),
+            userId ? apiJson('GET', '/UserViews?userId=' + encodeURIComponent(userId)) : Promise.resolve({ Items: [] })
+        ]).then(function (r) {
+            var s = r[0].settings, admin = r[0].admin, views = (r[1].Items || []);
+            document.querySelectorAll('.serverName').forEach(function (el) { el.textContent = r[0].serverName || 'the server'; });
+            var norm = function (id) { return String(id).replace(/-/g, '').toLowerCase(); };
+            var adminLibs = (admin.privateLibraryIds || []).map(norm);
+            var mine = (s.PrivateLibraryIds || []).map(norm);
+            $('alwaysPrivate').checked = !!s.AlwaysPrivate;
+            $('tags').value = s.PrivateTags || '';
+            $('libs').innerHTML = views.length ? views.map(function (v) {
+                var forced = adminLibs.indexOf(norm(v.Id)) >= 0;
+                return '<label class="row"><input type="checkbox" data-lib="' + esc(v.Id) + '"' +
+                    (forced || mine.indexOf(norm(v.Id)) >= 0 ? ' checked' : '') + (forced ? ' disabled' : '') + '><span>' + esc(v.Name) +
+                    (forced ? '<small>Private for everyone (set by the admin)</small>' : '') + '</span></label>';
+            }).join('') : '<p class="sub">No libraries.</p>';
+            var rules = [];
+            if (admin.privateTags) { rules.push('tags: ' + admin.privateTags); }
+            if (admin.privateRatings) { rules.push('ratings: ' + admin.privateRatings); }
+            $('adminRules').textContent = rules.length ? 'Always private on this server (' + rules.join('; ') + ').' : '';
+            syncLibs();
+            $('privacy').hidden = false;
+        }).catch(function () { $('privacy').hidden = true; });
+    }
+
+    function syncLibs() { $('libsWrap').style.opacity = $('alwaysPrivate').checked ? .4 : 1; }
 
     function $(id) { return document.getElementById(id); }
     function show(id) {
@@ -128,6 +198,7 @@
             var stored = {};
             try { stored = JSON.parse(localStorage.getItem('jellyfin_credentials') || '{}'); } catch (e) { }
             var match = (stored.Servers || []).filter(function (s) { return s.Id === info.Id && s.AccessToken; })[0];
+            if (match) { userId = match.UserId; }
             return match ? match.AccessToken : null;
         });
     }
@@ -177,12 +248,24 @@
             refresh();
         });
     };
+    $('alwaysPrivate').onchange = syncLibs;
+    $('saveBtn').onclick = function () {
+        var libs = Array.prototype.map.call(document.querySelectorAll('#libs input:checked:not(:disabled)'), function (c) { return c.getAttribute('data-lib'); });
+        apiJson('POST', '/Jellycord/Me/Settings', {
+            AlwaysPrivate: $('alwaysPrivate').checked, PrivateLibraryIds: libs, PrivateTags: $('tags').value
+        }).then(function () {
+            $('saved').hidden = false;
+            setTimeout(function () { $('saved').hidden = true; }, 2000);
+        }).catch(function (e) { fail('Saving failed: ' + e.message); });
+    };
     $('gotoWeb').onclick = function () { location.href = base + '/web/'; };
 
     findToken().then(function (token) {
         if (!token) { return show('signin'); }
         auth = 'MediaBrowser Client="Jellycord", Device="Browser", DeviceId="' + deviceId() + '", Version="0.1.0", Token="' + token + '"';
-        return refresh();
+        return refresh().then(function () {
+            if ($('unconfigured').hidden) { loadPrivacy(); }
+        });
     }).catch(function (e) { show('signin'); fail(e.message); });
 })();
 </script>

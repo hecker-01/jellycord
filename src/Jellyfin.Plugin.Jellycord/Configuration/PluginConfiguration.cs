@@ -30,6 +30,15 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public bool UploadArtwork { get; set; }
 
+    /// <summary>Libraries whose items are private: only "Watching {server}" is shown.</summary>
+    public string[] PrivateLibraryIds { get; set; } = [];
+
+    /// <summary>Comma-separated tags that make an item private (also inherited from series/albums).</summary>
+    public string PrivateTags { get; set; } = "nsfw, adult, xxx, hentai, porn";
+
+    /// <summary>Comma-separated parental ratings that make an item private.</summary>
+    public string PrivateRatings { get; set; } = "XXX, X, AO, NC-17, R18, R18+, 18+";
+
     /// <summary>Small playing/paused badge on the corner of the poster.</summary>
     public bool ShowStatusIcon { get; set; } = true;
 

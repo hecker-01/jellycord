@@ -19,6 +19,17 @@ public sealed class LinkedAccount
     public long ExpiresAt { get; set; }
 }
 
+/// <summary>Per-user privacy choices. They only ever add to the admin's rules.</summary>
+public sealed class UserSettings
+{
+    /// <summary>Never show what I'm playing, only "Watching {server}".</summary>
+    public bool AlwaysPrivate { get; set; }
+
+    public string[] PrivateLibraryIds { get; set; } = [];
+
+    public string PrivateTags { get; set; } = string.Empty;
+}
+
 /// <summary>
 /// Secrets kept out of the plugin XML config (which the dashboard can read back):
 /// the Discord client secret and every user's OAuth tokens. Stored as an owner-only JSON file.
@@ -107,6 +118,23 @@ public sealed class CredentialStore
         }
     }
 
+    public UserSettings GetSettings(Guid userId)
+    {
+        lock (_lock)
+        {
+            return _data.UserSettings.TryGetValue(userId, out var s) ? s : new UserSettings();
+        }
+    }
+
+    public void SetSettings(Guid userId, UserSettings settings)
+    {
+        lock (_lock)
+        {
+            _data.UserSettings[userId] = settings;
+            SaveLocked();
+        }
+    }
+
     /// <summary>Persists in-place token changes to an account that is still linked.</summary>
     public void Save(LinkedAccount account)
     {
@@ -154,5 +182,7 @@ public sealed class CredentialStore
         public string ClientSecret { get; set; } = string.Empty;
 
         public List<LinkedAccount> Accounts { get; set; } = [];
+
+        public Dictionary<Guid, UserSettings> UserSettings { get; set; } = [];
     }
 }

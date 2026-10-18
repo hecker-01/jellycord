@@ -28,6 +28,8 @@ public class JellycordController : ControllerBase
     private readonly IUserManager _userManager;
     private readonly ILibraryManager _libraryManager;
     private readonly ArtworkResolver _artwork;
+    private readonly PrivacyFilter _privacy;
+    private readonly MediaBrowser.Controller.IServerApplicationHost _host;
     private readonly ILogger<JellycordController> _logger;
 
     public JellycordController(
@@ -38,6 +40,8 @@ public class JellycordController : ControllerBase
         IUserManager userManager,
         ILibraryManager libraryManager,
         ArtworkResolver artwork,
+        PrivacyFilter privacy,
+        MediaBrowser.Controller.IServerApplicationHost host,
         ILogger<JellycordController> logger)
     {
         _discord = discord;
@@ -47,6 +51,8 @@ public class JellycordController : ControllerBase
         _userManager = userManager;
         _libraryManager = libraryManager;
         _artwork = artwork;
+        _privacy = privacy;
+        _host = host;
         _logger = logger;
     }
 
@@ -198,6 +204,43 @@ public class JellycordController : ControllerBase
         }
     }
 
+    /// <summary>The caller's privacy settings, plus the admin's rules so the page can show them.</summary>
+    [HttpGet("Me/Settings")]
+    public ActionResult GetMySettings()
+    {
+        if (CallerId() is not { } id)
+        {
+            return Unauthorized();
+        }
+
+        var cfg = Plugin.Instance!.Configuration;
+        return Ok(new
+        {
+            settings = _store.GetSettings(id),
+            admin = new { privateLibraryIds = cfg.PrivateLibraryIds, privateTags = cfg.PrivateTags, privateRatings = cfg.PrivateRatings },
+            serverName = _host.FriendlyName,
+        });
+    }
+
+    [HttpPost("Me/Settings")]
+    public ActionResult SetMySettings([FromBody] UserSettings settings)
+    {
+        if (CallerId() is not { } id)
+        {
+            return Unauthorized();
+        }
+
+        var clean = new UserSettings
+        {
+            AlwaysPrivate = settings.AlwaysPrivate,
+            PrivateLibraryIds = (settings.PrivateLibraryIds ?? []).Where(s => Guid.TryParse(s, out _)).Distinct().Take(100).ToArray(),
+            PrivateTags = (settings.PrivateTags ?? string.Empty).Trim() is { Length: <= 1000 } t ? t : string.Empty,
+        };
+        _store.SetSettings(id, clean);
+        _tracker.Invalidate(id);
+        return Ok(clean);
+    }
+
     [HttpPost("Me/Unlink")]
     public async Task<ActionResult> UnlinkMe(CancellationToken ct)
         => CallerId() is { } id ? await UnlinkCoreAsync(id, ct).ConfigureAwait(false) : Unauthorized();
@@ -232,12 +275,14 @@ public class JellycordController : ControllerBase
             return NotFound(new { error = "No playable movie, episode or track with that ID." });
         }
 
-        var artwork = await _artwork.ResolveAsync(media, cfg).ConfigureAwait(false);
-        var activity = PresenceMapper.Map(media, 0, false, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), cfg, artwork);
+        // admin rules only; per-user rules can add to this
+        media = media with { IsPrivate = _privacy.IsPrivate(item!, cfg) };
+        var artwork = media.IsPrivate ? null : await _artwork.ResolveAsync(media, cfg).ConfigureAwait(false);
+        var activity = PresenceMapper.Map(media, 0, false, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), cfg, artwork, _host.FriendlyName);
         var source = PresenceMapper.PublicPosterUrl(media, cfg) is not null ? "public-url"
             : artwork is not null ? "lookup"
             : activity?.LargeImage is null ? "none" : "fallback";
-        return Ok(new { imageSource = source, activity = activity?.ToJson(cfg.ClientId) });
+        return Ok(new { isPrivate = media.IsPrivate, imageSource = source, activity = activity?.ToJson(cfg.ClientId) });
     }
 
     [HttpGet("ClientSecret")]

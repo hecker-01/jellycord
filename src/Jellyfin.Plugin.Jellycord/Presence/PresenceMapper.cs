@@ -15,12 +15,32 @@ public static class PresenceMapper
 
     /// <summary>Returns null when this item shouldn't be shown at all.</summary>
     /// <param name="artworkUrl">A public poster found by <see cref="ArtworkResolver"/>, if any.</param>
+    /// <param name="serverName">Shown instead of the title for private items.</param>
     public static PresenceActivity? Map(
-        MediaSnapshot media, long positionTicks, bool paused, long nowMs, PluginConfiguration cfg, string? artworkUrl = null)
+        MediaSnapshot media,
+        long positionTicks,
+        bool paused,
+        long nowMs,
+        PluginConfiguration cfg,
+        string? artworkUrl = null,
+        string serverName = "Jellyfin")
     {
         if (paused && !cfg.ShowWhenPaused)
         {
             return null;
+        }
+
+        if (media.IsPrivate)
+        {
+            // nothing about the item itself: no title, poster, progress or pause state
+            var logo = ResolveFallback(cfg);
+            return new PresenceActivity
+            {
+                Type = media.Kind == MediaKind.Music ? PresenceActivity.Listening : PresenceActivity.Watching,
+                Name = Fit(string.IsNullOrWhiteSpace(serverName) ? "Jellyfin" : serverName)!,
+                LargeImage = logo,
+                LargeText = logo is null ? null : Fit(serverName),
+            };
         }
 
         int type = PresenceActivity.Watching;
@@ -108,6 +128,11 @@ public static class PresenceMapper
             return artworkUrl;
         }
 
+        return ResolveFallback(cfg);
+    }
+
+    private static string? ResolveFallback(PluginConfiguration cfg)
+    {
         var fallback = cfg.FallbackImage?.Trim();
         if (string.IsNullOrEmpty(fallback))
         {

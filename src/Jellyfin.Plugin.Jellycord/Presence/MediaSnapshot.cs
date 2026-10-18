@@ -31,6 +31,9 @@ public sealed record MediaSnapshot
 
     public long? RunTimeTicks { get; init; }
 
+    /// <summary>Hide everything about this item (NSFW etc.); see PrivacyFilter.</summary>
+    public bool IsPrivate { get; init; }
+
     /// <summary>Item whose Primary image is the poster (series for episodes, album for tracks).</summary>
     public Guid ImageItemId { get; init; }
 }

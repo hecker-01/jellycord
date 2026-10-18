@@ -42,6 +42,7 @@ Dashboard → Plugins → **Jellycord**:
 - **Upload posters as a last resort** (optional, off): see below.
 - **Fallback image** (optional): shown when there's no poster. Leave it empty for the Jellycord logo, or use an https image URL, an art asset key from your Discord app, or `none`.
 - **Status badge**: a small playing/paused icon on the corner of the artwork (on by default).
+- **Private content**: libraries, tags and parental ratings that should never be shown (see [Private content](#private-content-nsfw)).
 - Choose what to show (movies / episodes / music), whether to keep the status while paused, and the clear delay.
 
 ### 4. Link users
@@ -63,6 +64,17 @@ Each user opens **`https://<your-jellyfin>/Jellycord/Link`** while signed in to 
 | Paused | Same, with "Paused" and no progress bar (or cleared, if configured). Discord shows its own small elapsed timer here. |
 
 Theme songs, trailers and other extras are ignored. If a user plays on several devices at once, the one actually playing wins.
+
+### Private content (NSFW)
+
+Some things shouldn't end up on your Discord profile. A private item only shows **"Watching *Your Server Name*"**, with the Jellycord logo: no title, poster, progress bar or pause state, and no poster lookup or upload happens for it.
+
+An item is private if any of these match:
+
+- **Admin rules** (plugin settings, apply to everyone): private libraries, tags (default `nsfw, adult, xxx, hentai, porn`, including tags on the series or album) and parental ratings (default `XXX, X, AO, NC-17, R18, R18+, 18+`).
+- **User rules** (each user's link page): users can mark extra libraries or tags private for themselves, or turn on **Keep everything private** to only ever show the server name. Users can add rules but can't remove the admin's.
+
+`GET /Jellycord/Preview/{itemId}` reports `isPrivate` under the admin rules.
 
 ### Posters on private servers
 

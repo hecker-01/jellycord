@@ -1,4 +1,6 @@
+using Jellyfin.Plugin.Jellycord.Discord;
 using Jellyfin.Plugin.Jellycord.Presence;
+using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Hosting;
@@ -22,6 +24,9 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
     private readonly ISessionManager _sessionManager;
     private readonly IPresenceSink _sink;
     private readonly ArtworkResolver? _artwork;
+    private readonly PrivacyFilter? _privacy;
+    private readonly IServerApplicationHost? _host;
+    private readonly CredentialStore? _store;
     private readonly ILogger<PlaybackTracker> _logger;
     private readonly TimeProvider _time;
     private readonly Lock _lock = new();
@@ -30,9 +35,19 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
     private Task? _loop;
     private DateTimeOffset _lastReconcile;
 
-    public PlaybackTracker(ISessionManager sessionManager, IPresenceSink sink, ArtworkResolver artwork, ILogger<PlaybackTracker> logger)
+    public PlaybackTracker(
+        ISessionManager sessionManager,
+        IPresenceSink sink,
+        ArtworkResolver artwork,
+        PrivacyFilter privacy,
+        IServerApplicationHost host,
+        CredentialStore store,
+        ILogger<PlaybackTracker> logger)
         : this(sessionManager, sink, artwork, logger, TimeProvider.System)
     {
+        _privacy = privacy;
+        _host = host;
+        _store = store;
     }
 
     internal PlaybackTracker(ISessionManager sessionManager, IPresenceSink sink, ArtworkResolver? artwork, ILogger<PlaybackTracker> logger, TimeProvider time)
@@ -45,6 +60,8 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
     }
 
     private long NowMs => _time.GetUtcNow().ToUnixTimeMilliseconds();
+
+    private string ServerName => string.IsNullOrWhiteSpace(_host?.FriendlyName) ? "Jellyfin" : _host.FriendlyName;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -129,6 +146,11 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
         if (media is null)
         {
             return;
+        }
+
+        if (_privacy is not null && Plugin.Instance?.Configuration is { } cfg && _privacy.IsPrivate(e.Item, cfg, _store?.GetSettings(e.Session.UserId)))
+        {
+            media = media with { IsPrivate = true };
         }
 
         var now = NowMs;
@@ -261,7 +283,8 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
                     .FirstOrDefault();
                 var best = bestPair.Value;
                 string? artwork = null;
-                if (best is not null && _artwork is not null)
+                // private items never get a poster lookup (or upload)
+                if (best is not null && _artwork is not null && !best.Media.IsPrivate)
                 {
                     // look up the poster lazily, only for users we can actually show
                     if (best.Artwork is null)
@@ -280,7 +303,7 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
 
                 var desired = best is null
                     ? null
-                    : PresenceMapper.Map(best.Media, best.PositionTicks, best.Paused, best.ReportedAtMs, cfg, artwork);
+                    : PresenceMapper.Map(best.Media, best.PositionTicks, best.Paused, best.ReportedAtMs, cfg, artwork, ServerName);
 
                 var action = PresenceDecision.Decide(
                     user.LastSent,

@@ -62,13 +62,30 @@
                     </div>
                 </div>
 
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">4. Private content</h3>
+                    <p class="fieldDescription">Anything matching these rules only shows <b>"Watching <span class="jcServerName">your server</span>"</b>: no title, poster or progress. Users can add their own rules on the link page, but can't remove these.</p>
+                    <div class="fieldDescription" style="margin:1em 0 .5em">Private libraries</div>
+                    <div id="PrivateLibraries"><span class="fieldDescription">Loading…</span></div>
+                    <div class="inputContainer" style="margin-top:1.5em">
+                        <label class="inputLabel inputLabelUnfocused" for="PrivateTags">Private tags</label>
+                        <input id="PrivateTags" name="PrivateTags" type="text" is="emby-input" />
+                        <div class="fieldDescription">Comma-separated. Tags on a series or album apply to its episodes/tracks.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="PrivateRatings">Private parental ratings</label>
+                        <input id="PrivateRatings" name="PrivateRatings" type="text" is="emby-input" />
+                        <div class="fieldDescription">Comma-separated, e.g. XXX, NC-17, R18. Country prefixes are ignored (de-18 matches 18).</div>
+                    </div>
+                </div>
+
                 <div>
                     <button is="emby-button" type="submit" class="raised button-submit block emby-button"><span>Save</span></button>
                 </div>
             </form>
 
             <div class="verticalSection" style="margin-top:2em">
-                <h3 class="sectionTitle">4. Link users</h3>
+                <h3 class="sectionTitle">5. Link users</h3>
                 <p>Share this page with your users. They open it while signed in to Jellyfin and link their own Discord:</p>
                 <p><a id="LinkPageUrl" is="emby-linkbutton" class="button-link" target="_blank"></a></p>
                 <div id="Accounts"></div>
@@ -81,7 +98,18 @@
             var pluginId = '92be543f-9182-4590-8b3a-7cdab36f3ef1';
             var page = document.querySelector('#JellycordConfigPage');
             var bools = ['ShowMovies', 'ShowEpisodes', 'ShowMusic', 'ShowWhenPaused', 'ShowStatusIcon', 'UploadArtwork'];
-            var texts = ['ClientId', 'PublicUrl', 'FallbackImage'];
+            var texts = ['ClientId', 'PublicUrl', 'FallbackImage', 'PrivateTags', 'PrivateRatings'];
+
+            function renderLibraries(selected) {
+                ApiClient.getVirtualFolders().then(function (folders) {
+                    var el = page.querySelector('#PrivateLibraries');
+                    if (!folders.length) { el.innerHTML = '<span class="fieldDescription">No libraries.</span>'; return; }
+                    el.innerHTML = folders.map(function (f) {
+                        return '<label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" data-lib="' + esc(f.ItemId) + '"' +
+                            (selected.indexOf(f.ItemId) >= 0 ? ' checked' : '') + ' /><span>' + esc(f.Name) + '</span></label>';
+                    }).join('');
+                });
+            }
 
             function esc(s) {
                 var d = document.createElement('div');
@@ -101,7 +129,7 @@
                         list.map(function (a) {
                             return '<tr><td>' + esc(a.userName) + '</td><td>' + esc(a.discordName) +
                                 (a.needsRelink ? ' <i>(needs re-link)</i>' : '') + '</td>' +
-                                '<td align="right"><button is="emby-button" class="emby-button" data-unlink="' + esc(a.userId) + '">Unlink</button></td></tr>';
+                                '<td align="right"><button is="emby-button" type="button" class="raised emby-button" data-unlink="' + esc(a.userId) + '">Unlink</button></td></tr>';
                         }).join('') + '</table>';
                     el.querySelectorAll('[data-unlink]').forEach(function (b) {
                         b.addEventListener('click', function () {
@@ -118,6 +146,7 @@
                     texts.forEach(function (k) { page.querySelector('#' + k).value = config[k] || ''; });
                     bools.forEach(function (k) { page.querySelector('#' + k).checked = !!config[k]; });
                     page.querySelector('#ClearDelaySeconds').value = config.ClearDelaySeconds;
+                    renderLibraries(config.PrivateLibraryIds || []);
                     Dashboard.hideLoadingMsg();
                 });
                 ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('Jellycord/ClientSecret'), dataType: 'json' }).then(function (s) {
@@ -130,6 +159,9 @@
                 a.href = url;
                 a.textContent = url;
                 loadAccounts();
+                ApiClient.getSystemInfo().then(function (info) {
+                    page.querySelectorAll('.jcServerName').forEach(function (s) { s.textContent = info.ServerName; });
+                });
             });
 
             page.querySelector('#JellycordConfigForm').addEventListener('submit', function (e) {
@@ -146,6 +178,8 @@
                     texts.forEach(function (k) { config[k] = page.querySelector('#' + k).value.trim(); });
                     bools.forEach(function (k) { config[k] = page.querySelector('#' + k).checked; });
                     config.ClearDelaySeconds = parseInt(page.querySelector('#ClearDelaySeconds').value, 10) || 0;
+                    config.PrivateLibraryIds = Array.prototype.map.call(
+                        page.querySelectorAll('[data-lib]:checked'), function (c) { return c.getAttribute('data-lib'); });
                     return Promise.all([ApiClient.updatePluginConfiguration(pluginId, config), saveSecret]);
                 }).then(function (r) {
                     page.querySelector('#ClientSecret').value = '';
