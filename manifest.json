@@ -6,6 +6,15 @@
     "overview": "Your Jellyfin playback as your Discord status",
     "owner": "hecker-01",
     "category": "General",
-    "versions": []
+    "versions": [
+      {
+        "version": "0.1.0.0",
+        "changelog": "See https://github.com/hecker-01/jellycord/releases/tag/v0.1.0",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/hecker-01/jellycord/releases/download/v0.1.0/jellycord_0.1.0.0.zip",
+        "checksum": "5f3992b4eba838b430c47507bc74a1db",
+        "timestamp": "2026-10-18T19:47:30Z"
+      }
+    ]
   }
 ]
