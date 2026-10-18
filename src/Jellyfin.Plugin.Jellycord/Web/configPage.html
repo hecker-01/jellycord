@@ -42,8 +42,8 @@
                     </div>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="FallbackImage">Fallback image</label>
-                        <input id="FallbackImage" name="FallbackImage" type="text" is="emby-input" placeholder="https://… or an asset key from your Discord app" />
-                        <div class="fieldDescription">Used when no poster is available (e.g. no public URL).</div>
+                        <input id="FallbackImage" name="FallbackImage" type="text" is="emby-input" placeholder="Jellycord logo" />
+                        <div class="fieldDescription">Used when no poster is available (e.g. no public URL): an https image URL or an art asset key from your Discord app. Leave empty for the Jellycord logo, or enter <code>none</code> for no image.</div>
                     </div>
                 </div>
 
@@ -53,6 +53,7 @@
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowEpisodes" /><span>Show TV episodes</span></label>
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowMusic" /><span>Show music (as "Listening to")</span></label>
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowWhenPaused" /><span>Keep status while paused</span></label>
+                    <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowStatusIcon" /><span>Show a small playing/paused badge on the artwork</span></label>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="ClearDelaySeconds">Clear delay after stop (seconds)</label>
                         <input id="ClearDelaySeconds" type="number" min="0" max="120" is="emby-input" />
@@ -77,7 +78,7 @@
         (function () {
             var pluginId = '92be543f-9182-4590-8b3a-7cdab36f3ef1';
             var page = document.querySelector('#JellycordConfigPage');
-            var bools = ['ShowMovies', 'ShowEpisodes', 'ShowMusic', 'ShowWhenPaused'];
+            var bools = ['ShowMovies', 'ShowEpisodes', 'ShowMusic', 'ShowWhenPaused', 'ShowStatusIcon'];
             var texts = ['ClientId', 'PublicUrl', 'FallbackImage'];
 
             function esc(s) {

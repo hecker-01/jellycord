@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/banner.png" alt="Jellycord: your Jellyfin playback as your Discord status" width="100%"></p>
+
 # Jellycord
 
 A Jellyfin plugin that shows what you're watching as your **Discord status**: "Watching Breaking Bad · S5E14 · Ozymandias", with the poster and a live progress bar. It works for every user on the server who links their Discord, on any device (TV, phone, browser). Nobody needs the Discord desktop app running.
@@ -37,7 +39,8 @@ Dashboard → Plugins → **Jellycord**:
 
 - **Application ID**: from step 1.
 - **Public server URL** (optional): `https://jellyfin.example.com`. Discord must be able to reach it for posters to show. Image URLs never include an API key.
-- **Fallback image** (optional): an https image URL, or the name of an art asset uploaded to your Discord app, shown when there's no poster.
+- **Fallback image** (optional): shown when there's no poster. Leave it empty for the Jellycord logo, or use an https image URL, an art asset key from your Discord app, or `none`.
+- **Status badge**: a small playing/paused icon on the corner of the artwork (on by default).
 - Choose what to show (movies / episodes / music), whether to keep the status while paused, and the clear delay.
 
 ### 4. Link users
@@ -46,6 +49,11 @@ Each user opens **`https://<your-jellyfin>/Jellycord/Link`** while signed in to 
 
 ## What it shows
 
+<p>
+  <img src="assets/preview-playing.png" alt="Discord profile showing Watching Big Buck Bunny with poster and progress bar" width="49%">
+  <img src="assets/preview-paused.png" alt="The same status while paused" width="49%">
+</p>
+
 | Playing | Discord shows |
 |---|---|
 | Episode | **Watching** *Series* · `S1E2 · Episode title` · series poster · progress bar |
@@ -53,7 +61,7 @@ Each user opens **`https://<your-jellyfin>/Jellycord/Link`** while signed in to 
 | Music | **Listening to** *Track* · `by Artist · Album` · album art |
 | Paused | Same, with "Paused" and no progress bar (or cleared, if configured). Discord shows its own small elapsed timer here. |
 
-Theme songs, trailers and other extras are ignored. If a user plays on several devices at once, the one actually playing wins.
+Without a public server URL, the Jellycord logo is shown instead of the poster. Theme songs, trailers and other extras are ignored. If a user plays on several devices at once, the one actually playing wins.
 
 ## Privacy and caveats
 
@@ -91,6 +99,7 @@ src/Jellyfin.Plugin.Jellycord/
   Discord/    DiscordClient (OAuth device flow + headless-sessions), HeadlessSessionSink, CredentialStore
   Api/        JellycordController (link page + endpoints)
   Web/        configPage.html (admin), linkPage.html (users)
+assets/               logo, banner, status icons (SVG sources + PNGs used by Discord and the catalog)
 spike/HeadlessSpike/   standalone API check
 docs/                  research report and notes
 ```

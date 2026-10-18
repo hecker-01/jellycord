@@ -17,8 +17,14 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public string PublicUrl { get; set; } = string.Empty;
 
-    /// <summary>Image shown when no poster is available: an https URL or an asset key uploaded to the Discord app.</summary>
+    /// <summary>
+    /// Image shown when no poster is available: an https URL or an asset key uploaded to the
+    /// Discord app. Empty uses the Jellycord logo; "none" shows no image.
+    /// </summary>
     public string FallbackImage { get; set; } = string.Empty;
+
+    /// <summary>Small playing/paused badge on the corner of the poster.</summary>
+    public bool ShowStatusIcon { get; set; } = true;
 
     public bool ShowMovies { get; set; } = true;
 

@@ -94,6 +94,30 @@ public class PresenceMapperTests
     }
 
     [Fact]
+    public void NoPoster_UsesLogoWithPlayingBadge()
+    {
+        var a = PresenceMapper.Map(Episode(), 0, false, Now, new PluginConfiguration())!;
+
+        Assert.Equal(PresenceMapper.LogoUrl, a.LargeImage);
+        Assert.Equal(PresenceMapper.PlayingIconUrl, a.SmallImage);
+    }
+
+    [Fact]
+    public void Paused_SwapsBadge()
+    {
+        var a = PresenceMapper.Map(Episode(), 0, true, Now, new PluginConfiguration())!;
+        Assert.Equal(PresenceMapper.PausedIconUrl, a.SmallImage);
+        Assert.Equal("Paused", a.SmallText);
+    }
+
+    [Fact]
+    public void Badge_CanBeTurnedOff_AndNeedsALargeImage()
+    {
+        Assert.Null(PresenceMapper.Map(Episode(), 0, false, Now, new PluginConfiguration { ShowStatusIcon = false })!.SmallImage);
+        Assert.Null(PresenceMapper.Map(Episode(), 0, false, Now, new PluginConfiguration { FallbackImage = "none" })!.SmallImage);
+    }
+
+    [Fact]
     public void Text_IsPaddedAndTruncated()
     {
         Assert.Equal(2, PresenceMapper.Fit("X")!.Length);
@@ -104,7 +128,7 @@ public class PresenceMapperTests
     [Fact]
     public void Json_UsesStringTimestampsAndOmitsNulls()
     {
-        var a = PresenceMapper.Map(Episode(), 0, false, Now, new PluginConfiguration())!;
+        var a = PresenceMapper.Map(Episode(), 0, false, Now, new PluginConfiguration { FallbackImage = "none" })!;
         var json = a.ToJson("123").ToJsonString();
 
         Assert.Contains("\"start\":\"1800000000000\"", json);

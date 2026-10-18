@@ -7,6 +7,11 @@ namespace Jellyfin.Plugin.Jellycord.Presence;
 public static class PresenceMapper
 {
     private const int MaxText = 128;
+    private const string AssetBase = "https://raw.githubusercontent.com/hecker-01/jellycord/main/assets/";
+
+    public const string LogoUrl = AssetBase + "logo.png";
+    public const string PlayingIconUrl = AssetBase + "playing.png";
+    public const string PausedIconUrl = AssetBase + "paused.png";
 
     /// <summary>Returns null when this item shouldn't be shown at all.</summary>
     public static PresenceActivity? Map(
@@ -58,6 +63,9 @@ public static class PresenceMapper
             end = start + (media.RunTimeTicks.Value / TimeSpan.TicksPerMillisecond);
         }
 
+        var largeImage = ResolveImage(media, cfg);
+        var showBadge = cfg.ShowStatusIcon && largeImage is not null;
+
         return new PresenceActivity
         {
             Type = type,
@@ -66,8 +74,10 @@ public static class PresenceMapper
             State = Fit(state),
             StartMs = start,
             EndMs = end,
-            LargeImage = ResolveImage(media, cfg),
+            LargeImage = largeImage,
             LargeText = Fit(media.Kind == MediaKind.Music ? media.Album ?? media.Title : name),
+            SmallImage = showBadge ? (paused ? PausedIconUrl : PlayingIconUrl) : null,
+            SmallText = showBadge ? (paused ? "Paused" : "via Jellycord") : null,
         };
     }
 
@@ -100,7 +110,13 @@ public static class PresenceMapper
             }
         }
 
-        return string.IsNullOrWhiteSpace(cfg.FallbackImage) ? null : cfg.FallbackImage.Trim();
+        var fallback = cfg.FallbackImage?.Trim();
+        if (string.IsNullOrEmpty(fallback))
+        {
+            return LogoUrl;
+        }
+
+        return fallback.Equals("none", StringComparison.OrdinalIgnoreCase) ? null : fallback;
     }
 
     private static string Coalesce(string? a, string b) => string.IsNullOrWhiteSpace(a) ? b : a;

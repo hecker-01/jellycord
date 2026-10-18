@@ -9,5 +9,6 @@ description: >
   (Watching / Listening to, with poster and progress bar). Works server-side
   through Discord's Social SDK presence API, so no Discord desktop client is needed.
 category: "General"
+imageUrl: "https://raw.githubusercontent.com/hecker-01/jellycord/main/assets/banner.png"
 artifacts:
   - "Jellyfin.Plugin.Jellycord.dll"

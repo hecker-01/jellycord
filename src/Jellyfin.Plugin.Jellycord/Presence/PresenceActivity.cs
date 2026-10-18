@@ -27,8 +27,13 @@ public sealed record PresenceActivity
 
     public string? LargeText { get; init; }
 
+    /// <summary>Badge in the corner of the large image (only shown when there is a large image).</summary>
+    public string? SmallImage { get; init; }
+
+    public string? SmallText { get; init; }
+
     /// <summary>Changes when anything other than the timestamps changes.</summary>
-    public string ContentKey => $"{Type}|{Name}|{Details}|{State}|{LargeImage}|{StartMs is null}";
+    public string ContentKey => $"{Type}|{Name}|{Details}|{State}|{LargeImage}|{SmallImage}|{StartMs is null}";
 
     public JsonObject ToJson(string applicationId)
     {
@@ -64,6 +69,15 @@ public sealed record PresenceActivity
             if (LargeText is not null)
             {
                 assets["large_text"] = LargeText;
+            }
+
+            if (SmallImage is not null)
+            {
+                assets["small_image"] = SmallImage;
+                if (SmallText is not null)
+                {
+                    assets["small_text"] = SmallText;
+                }
             }
 
             o["assets"] = assets;
