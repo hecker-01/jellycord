@@ -19,5 +19,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IPresenceSink>(sp => sp.GetRequiredService<HeadlessSessionSink>());
         serviceCollection.AddSingleton<PlaybackTracker>();
         serviceCollection.AddHostedService(sp => sp.GetRequiredService<PlaybackTracker>());
+        serviceCollection.AddHostedService<Web.WebInjection>();
     }
 }

@@ -67,6 +67,21 @@ public class JellycordController : ControllerBase
         return stream is null ? NotFound() : File(stream, "text/html; charset=utf-8");
     }
 
+    /// <summary>Script File Transformation injects into jellyfin-web (user menu entry + native page).</summary>
+    [HttpGet("web.js")]
+    [AllowAnonymous]
+    public ActionResult GetWebScript()
+    {
+        var stream = typeof(Plugin).Assembly.GetManifestResourceStream("Jellyfin.Plugin.Jellycord.Web.web.js");
+        if (stream is null)
+        {
+            return NotFound();
+        }
+
+        Response.Headers.CacheControl = "public, max-age=3600";
+        return File(stream, "application/javascript; charset=utf-8");
+    }
+
     [HttpGet("Me")]
     public ActionResult GetMe()
     {

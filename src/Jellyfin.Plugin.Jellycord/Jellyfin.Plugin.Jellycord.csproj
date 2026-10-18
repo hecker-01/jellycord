@@ -20,6 +20,8 @@
     <EmbeddedResource Include="Web\configPage.html" />
     <None Remove="Web\linkPage.html" />
     <EmbeddedResource Include="Web\linkPage.html" />
+    <None Remove="Web\web.js" />
+    <EmbeddedResource Include="Web\web.js" />
   </ItemGroup>
 
   <ItemGroup>

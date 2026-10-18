@@ -47,7 +47,11 @@ Dashboard → Plugins → **Jellycord**:
 
 ### 4. Link users
 
-Each user opens **`https://<your-jellyfin>/Jellycord/Link`** while signed in to Jellyfin web, clicks **Link Discord**, and approves the code at `discord.com/activate`. The link page and the admin page both show the URL. Admins can see and unlink accounts on the settings page.
+**With the [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin installed (recommended):** users find **Discord status** in Jellyfin's own user menu (avatar → Discord status) and on the **Settings** page. It opens a native Jellyfin page where they link Discord and set their privacy options. You can turn this off in the plugin settings.
+
+**Without it:** users open **`https://<your-jellyfin>/Jellycord/Link`** while signed in to Jellyfin web. The admin page shows the URL.
+
+Either way they click **Link Discord** and approve the code at `discord.com/activate`. Admins can see and unlink accounts on the plugin settings page.
 
 ## What it shows
 
@@ -123,7 +127,7 @@ src/Jellyfin.Plugin.Jellycord/
   Presence/   PresenceMapper (item → activity), IPresenceSink
   Discord/    DiscordClient (OAuth device flow + headless-sessions), HeadlessSessionSink, CredentialStore
   Api/        JellycordController (link page + endpoints)
-  Web/        configPage.html (admin), linkPage.html (users)
+  Web/        configPage.html (admin), linkPage.html (users), web.js + WebInjection (native jellyfin-web page via File Transformation)
 assets/               logo, banner, status icons (SVG sources + PNGs used by Discord and the catalog)
 spike/HeadlessSpike/   standalone API check
 docs/                  research report and notes

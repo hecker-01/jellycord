@@ -39,6 +39,9 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Comma-separated parental ratings that make an item private.</summary>
     public string PrivateRatings { get; set; } = "XXX, X, AO, NC-17, R18, R18+, 18+";
 
+    /// <summary>Add "Discord status" to jellyfin-web's user menu (needs the File Transformation plugin).</summary>
+    public bool InjectWebUi { get; set; } = true;
+
     /// <summary>Small playing/paused badge on the corner of the poster.</summary>
     public bool ShowStatusIcon { get; set; } = true;
 
