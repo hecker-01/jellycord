@@ -1,0 +1,11 @@
+[
+  {
+    "guid": "92be543f-9182-4590-8b3a-7cdab36f3ef1",
+    "name": "Jellycord",
+    "description": "Shows what each linked user is watching on Jellyfin as their Discord status (Watching / Listening to, with poster and progress bar). Works server-side through Discord's Social SDK presence API, so no Discord desktop client is needed.",
+    "overview": "Your Jellyfin playback as your Discord status",
+    "owner": "hecker-01",
+    "category": "General",
+    "versions": []
+  }
+]

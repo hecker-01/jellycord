@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jellycord · Link Discord</title>
+    <style>
+        :root {
+            --bg: #101010; --card: #1c1c1e; --text: #f2f2f2; --muted: #a0a0a8;
+            --accent: #5865f2; --accent-2: #00a4dc; --danger: #e5484d; --border: #2c2c30;
+        }
+        @media (prefers-color-scheme: light) {
+            :root { --bg: #f4f4f6; --card: #fff; --text: #18181b; --muted: #5c5c66; --border: #e2e2e8; }
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+            background: var(--bg); color: var(--text);
+            font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        }
+        .card {
+            width: 100%; max-width: 440px; background: var(--card); border: 1px solid var(--border);
+            border-radius: 16px; padding: 28px;
+        }
+        h1 { margin: 0 0 4px; font-size: 1.4rem; }
+        .sub { margin: 0 0 20px; color: var(--muted); }
+        button {
+            font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 12px 18px;
+            cursor: pointer; width: 100%; color: #fff; background: var(--accent);
+        }
+        button.secondary { background: transparent; color: var(--danger); border: 1px solid var(--border); margin-top: 10px; }
+        button:disabled { opacity: .6; cursor: default; }
+        .code {
+            font: 700 2rem/1 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .15em;
+            text-align: center; padding: 18px; margin: 16px 0; border: 1px dashed var(--border); border-radius: 12px;
+        }
+        .status { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+        .dot.ok { background: #3ecf8e; }
+        .note { font-size: .85rem; color: var(--muted); margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
+        a { color: var(--accent-2); }
+        .error { color: var(--danger); margin-top: 12px; }
+        [hidden] { display: none !important; }
+    </style>
+</head>
+<body>
+<main class="card">
+    <h1>Jellycord</h1>
+    <p class="sub">Show what you watch on Jellyfin as your Discord status.</p>
+
+    <div id="loading">Loading…</div>
+
+    <div id="signin" hidden>
+        <p>Sign in to Jellyfin in this browser first, then reload this page.</p>
+        <button id="gotoWeb">Open Jellyfin</button>
+    </div>
+
+    <div id="unconfigured" hidden>
+        <p>The server admin hasn't set up Discord yet. Ask them to finish the Jellycord settings.</p>
+    </div>
+
+    <div id="linked" hidden>
+        <div class="status"><span class="dot ok"></span><span>Linked to <b id="discordName"></b></span></div>
+        <p class="sub" id="relink" hidden>Discord rejected the saved link. Link again to resume.</p>
+        <button id="relinkBtn" hidden>Link again</button>
+        <button id="unlinkBtn" class="secondary">Unlink Discord</button>
+    </div>
+
+    <div id="unlinked" hidden>
+        <div class="status"><span class="dot"></span><span>Not linked</span></div>
+        <button id="linkBtn">Link Discord</button>
+    </div>
+
+    <div id="pending" hidden>
+        <p>Open <a id="verifyLink" target="_blank" rel="noopener">discord.com/activate</a> and approve this code:</p>
+        <div class="code" id="userCode"></div>
+        <p class="sub">Waiting for approval…</p>
+    </div>
+
+    <div class="error" id="error" hidden></div>
+
+    <p class="note">
+        Discord has no presence-only permission. The one Jellycord uses
+        (<code>sdk.social_layer_presence</code>) also lets the app read and manage your friends list.
+        Jellycord only sets your status. You can revoke access any time in
+        <b>Discord → Settings → Authorized Apps</b>, or with Unlink above.
+        Only approve a code you just generated yourself.
+    </p>
+</main>
+
+<script>
+(function () {
+    'use strict';
+    var base = location.pathname.replace(/\/Jellycord\/Link\/?$/i, '');
+    var auth = null;
+    var pollTimer = null;
+
+    function $(id) { return document.getElementById(id); }
+    function show(id) {
+        ['loading', 'signin', 'unconfigured', 'linked', 'unlinked', 'pending'].forEach(function (s) { $(s).hidden = s !== id; });
+    }
+    function fail(msg) { var e = $('error'); e.textContent = msg; e.hidden = !msg; }
+
+    function deviceId() {
+        var k = 'jellycordLinkDeviceId', id = null;
+        try { id = localStorage.getItem(k); } catch (e) { }
+        if (!id) {
+            id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/-/g, '');
+            try { localStorage.setItem(k, id); } catch (e) { }
+        }
+        return id;
+    }
+
+    function api(method, path) {
+        return fetch(base + path, { method: method, headers: { 'Authorization': auth } }).then(function (r) {
+            return r.text().then(function (t) {
+                var body = t ? JSON.parse(t) : {};
+                if (!r.ok) { throw new Error(body.error || ('HTTP ' + r.status)); }
+                return body;
+            });
+        });
+    }
+
+    // Only ever use a token that this exact server issued: match on server Id,
+    // because the browser may hold credentials for other Jellyfin servers.
+    function findToken() {
+        return fetch(base + '/System/Info/Public').then(function (r) { return r.json(); }).then(function (info) {
+            var stored = {};
+            try { stored = JSON.parse(localStorage.getItem('jellyfin_credentials') || '{}'); } catch (e) { }
+            var match = (stored.Servers || []).filter(function (s) { return s.Id === info.Id && s.AccessToken; })[0];
+            return match ? match.AccessToken : null;
+        });
+    }
+
+    function refresh() {
+        return api('GET', '/Jellycord/Me').then(function (me) {
+            if (!me.configured) { return show('unconfigured'); }
+            if (me.linked) {
+                $('discordName').textContent = me.discordName;
+                $('relink').hidden = $('relinkBtn').hidden = !me.needsRelink;
+                return show('linked');
+            }
+            show('unlinked');
+        });
+    }
+
+    function startLink() {
+        fail('');
+        api('POST', '/Jellycord/Me/Link').then(function (p) {
+            $('userCode').textContent = p.userCode;
+            $('verifyLink').href = p.verificationUri;
+            $('verifyLink').textContent = p.verificationUri.replace(/^https?:\/\//, '').replace(/\?.*$/, '');
+            show('pending');
+            window.open(p.verificationUri, '_blank', 'noopener');
+            clearInterval(pollTimer);
+            pollTimer = setInterval(poll, 3000);
+        }).catch(function (e) { fail(e.message); });
+    }
+
+    function poll() {
+        api('GET', '/Jellycord/Me/Link').then(function (r) {
+            if (r.status === 'pending') { return; }
+            clearInterval(pollTimer);
+            if (r.status === 'failed') { fail('Linking failed: ' + r.error); }
+            if (r.status === 'expired') { fail('The code expired. Try again.'); }
+            refresh();
+        }).catch(function (e) { clearInterval(pollTimer); fail(e.message); refresh(); });
+    }
+
+    $('linkBtn').onclick = startLink;
+    $('relinkBtn').onclick = startLink;
+    $('unlinkBtn').onclick = function () {
+        this.disabled = true;
+        var btn = this;
+        api('POST', '/Jellycord/Me/Unlink').catch(function (e) { fail(e.message); }).then(function () {
+            btn.disabled = false;
+            refresh();
+        });
+    };
+    $('gotoWeb').onclick = function () { location.href = base + '/web/'; };
+
+    findToken().then(function (token) {
+        if (!token) { return show('signin'); }
+        auth = 'MediaBrowser Client="Jellycord", Device="Browser", DeviceId="' + deviceId() + '", Version="0.1.0", Token="' + token + '"';
+        return refresh();
+    }).catch(function (e) { show('signin'); fail(e.message); });
+})();
+</script>
+</body>
+</html>

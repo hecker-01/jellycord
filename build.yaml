@@ -1,0 +1,13 @@
+name: "Jellycord"
+guid: "92be543f-9182-4590-8b3a-7cdab36f3ef1"
+targetAbi: "12.0.0.0"
+framework: "net10.0"
+owner: "hecker-01"
+overview: "Your Jellyfin playback as your Discord status"
+description: >
+  Shows what each linked user is watching on Jellyfin as their Discord status
+  (Watching / Listening to, with poster and progress bar). Works server-side
+  through Discord's Social SDK presence API, so no Discord desktop client is needed.
+category: "General"
+artifacts:
+  - "Jellyfin.Plugin.Jellycord.dll"

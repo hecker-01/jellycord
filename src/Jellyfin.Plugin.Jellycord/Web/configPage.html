@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Jellycord</title>
+</head>
+<body>
+<div id="JellycordConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="JellycordConfigForm">
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Jellycord</h2>
+                    <p>Shows what people are watching on this server as their Discord status. Each user links their own
+                        Discord account; nobody needs the Discord desktop app running.</p>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">1. Discord application</h3>
+                    <p class="fieldDescription">
+                        Create an app at <a is="emby-linkbutton" class="button-link" href="https://discord.com/developers/applications" target="_blank">discord.com/developers/applications</a>,
+                        turn on <b>OAuth2 → Public Client</b>, and fill in <b>Discord Social SDK → Getting Started</b> (self-serve).
+                        The app's name is not shown in the status; the media title is.
+                    </p>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="ClientId">Application ID</label>
+                        <input id="ClientId" name="ClientId" type="text" is="emby-input" inputmode="numeric" autocomplete="off" />
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="ClientSecret">Client secret (optional)</label>
+                        <input id="ClientSecret" type="password" is="emby-input" autocomplete="new-password" />
+                        <div class="fieldDescription" id="ClientSecretState">Only needed if Public Client is off. Never shown again once saved.</div>
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">2. Artwork</h3>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="PublicUrl">Public server URL</label>
+                        <input id="PublicUrl" name="PublicUrl" type="url" is="emby-input" placeholder="https://jellyfin.example.com" />
+                        <div class="fieldDescription">Optional. Must be HTTPS and reachable from the internet so Discord can fetch posters. No API key is ever added to image URLs.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="FallbackImage">Fallback image</label>
+                        <input id="FallbackImage" name="FallbackImage" type="text" is="emby-input" placeholder="https://… or an asset key from your Discord app" />
+                        <div class="fieldDescription">Used when no poster is available (e.g. no public URL).</div>
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">3. Behaviour</h3>
+                    <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowMovies" /><span>Show movies</span></label>
+                    <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowEpisodes" /><span>Show TV episodes</span></label>
+                    <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowMusic" /><span>Show music (as "Listening to")</span></label>
+                    <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowWhenPaused" /><span>Keep status while paused</span></label>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="ClearDelaySeconds">Clear delay after stop (seconds)</label>
+                        <input id="ClearDelaySeconds" type="number" min="0" max="120" is="emby-input" />
+                    </div>
+                </div>
+
+                <div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button"><span>Save</span></button>
+                </div>
+            </form>
+
+            <div class="verticalSection" style="margin-top:2em">
+                <h3 class="sectionTitle">4. Link users</h3>
+                <p>Share this page with your users. They open it while signed in to Jellyfin and link their own Discord:</p>
+                <p><a id="LinkPageUrl" is="emby-linkbutton" class="button-link" target="_blank"></a></p>
+                <div id="Accounts"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            var pluginId = '92be543f-9182-4590-8b3a-7cdab36f3ef1';
+            var page = document.querySelector('#JellycordConfigPage');
+            var bools = ['ShowMovies', 'ShowEpisodes', 'ShowMusic', 'ShowWhenPaused'];
+            var texts = ['ClientId', 'PublicUrl', 'FallbackImage'];
+
+            function esc(s) {
+                var d = document.createElement('div');
+                d.textContent = s == null ? '' : String(s);
+                return d.innerHTML;
+            }
+
+            function loadAccounts() {
+                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('Jellycord/Accounts'), dataType: 'json' }).then(function (list) {
+                    var el = page.querySelector('#Accounts');
+                    if (!list.length) {
+                        el.innerHTML = '<p class="fieldDescription">No users linked yet.</p>';
+                        return;
+                    }
+                    el.innerHTML = '<table style="width:100%;border-collapse:collapse">' +
+                        '<tr><th align="left">Jellyfin user</th><th align="left">Discord</th><th></th></tr>' +
+                        list.map(function (a) {
+                            return '<tr><td>' + esc(a.userName) + '</td><td>' + esc(a.discordName) +
+                                (a.needsRelink ? ' <i>(needs re-link)</i>' : '') + '</td>' +
+                                '<td align="right"><button is="emby-button" class="emby-button" data-unlink="' + esc(a.userId) + '">Unlink</button></td></tr>';
+                        }).join('') + '</table>';
+                    el.querySelectorAll('[data-unlink]').forEach(function (b) {
+                        b.addEventListener('click', function () {
+                            ApiClient.ajax({ type: 'POST', url: ApiClient.getUrl('Jellycord/Accounts/' + b.getAttribute('data-unlink') + '/Unlink') })
+                                .then(loadAccounts, loadAccounts);
+                        });
+                    });
+                });
+            }
+
+            page.addEventListener('pageshow', function () {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    texts.forEach(function (k) { page.querySelector('#' + k).value = config[k] || ''; });
+                    bools.forEach(function (k) { page.querySelector('#' + k).checked = !!config[k]; });
+                    page.querySelector('#ClearDelaySeconds').value = config.ClearDelaySeconds;
+                    Dashboard.hideLoadingMsg();
+                });
+                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('Jellycord/ClientSecret'), dataType: 'json' }).then(function (s) {
+                    page.querySelector('#ClientSecretState').textContent = s.isSet
+                        ? 'A secret is saved. Enter a new value to replace it, or a single space to clear it.'
+                        : 'Only needed if Public Client is off. Never shown again once saved.';
+                });
+                var url = ApiClient.getUrl('Jellycord/Link');
+                var a = page.querySelector('#LinkPageUrl');
+                a.href = url;
+                a.textContent = url;
+                loadAccounts();
+            });
+
+            page.querySelector('#JellycordConfigForm').addEventListener('submit', function (e) {
+                e.preventDefault();
+                Dashboard.showLoadingMsg();
+                var secret = page.querySelector('#ClientSecret').value;
+                var saveSecret = secret === ''
+                    ? Promise.resolve()
+                    : ApiClient.ajax({
+                        type: 'POST', url: ApiClient.getUrl('Jellycord/ClientSecret'),
+                        data: JSON.stringify({ Value: secret }), contentType: 'application/json'
+                    });
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    texts.forEach(function (k) { config[k] = page.querySelector('#' + k).value.trim(); });
+                    bools.forEach(function (k) { config[k] = page.querySelector('#' + k).checked; });
+                    config.ClearDelaySeconds = parseInt(page.querySelector('#ClearDelaySeconds').value, 10) || 0;
+                    return Promise.all([ApiClient.updatePluginConfiguration(pluginId, config), saveSecret]);
+                }).then(function (r) {
+                    page.querySelector('#ClientSecret').value = '';
+                    Dashboard.processPluginConfigurationUpdateResult(r[0]);
+                });
+                return false;
+            });
+        })();
+    </script>
+</div>
+</body>
+</html>

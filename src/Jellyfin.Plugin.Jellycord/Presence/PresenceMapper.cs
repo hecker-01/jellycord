@@ -1,0 +1,124 @@
+using System.Globalization;
+using Jellyfin.Plugin.Jellycord.Configuration;
+
+namespace Jellyfin.Plugin.Jellycord.Presence;
+
+/// <summary>Turns "user X is at position P in item I" into a Discord activity.</summary>
+public static class PresenceMapper
+{
+    private const int MaxText = 128;
+
+    /// <summary>Returns null when this item shouldn't be shown at all.</summary>
+    public static PresenceActivity? Map(
+        MediaSnapshot media, long positionTicks, bool paused, long nowMs, PluginConfiguration cfg)
+    {
+        if (paused && !cfg.ShowWhenPaused)
+        {
+            return null;
+        }
+
+        int type = PresenceActivity.Watching;
+        string name;
+        string? details;
+        string? state;
+
+        switch (media.Kind)
+        {
+            case MediaKind.Episode when cfg.ShowEpisodes:
+                name = Coalesce(media.SeriesName, media.Title);
+                details = name;
+                state = EpisodeLine(media);
+                break;
+            case MediaKind.Movie when cfg.ShowMovies:
+                name = media.Title;
+                details = media.Title;
+                state = media.Year?.ToString(CultureInfo.InvariantCulture);
+                break;
+            case MediaKind.Music when cfg.ShowMusic:
+                type = PresenceActivity.Listening;
+                name = media.Title;
+                details = media.Title;
+                state = media.Artists is null
+                    ? media.Album
+                    : media.Album is null ? $"by {media.Artists}" : $"by {media.Artists} · {media.Album}";
+                break;
+            default:
+                return null;
+        }
+
+        if (paused)
+        {
+            state = state is null ? "Paused" : $"{state} · Paused";
+        }
+
+        long? start = null, end = null;
+        if (!paused && media.RunTimeTicks is > 0)
+        {
+            start = nowMs - (positionTicks / TimeSpan.TicksPerMillisecond);
+            end = start + (media.RunTimeTicks.Value / TimeSpan.TicksPerMillisecond);
+        }
+
+        return new PresenceActivity
+        {
+            Type = type,
+            Name = Fit(name)!,
+            Details = Fit(details),
+            State = Fit(state),
+            StartMs = start,
+            EndMs = end,
+            LargeImage = ResolveImage(media, cfg),
+            LargeText = Fit(media.Kind == MediaKind.Music ? media.Album ?? media.Title : name),
+        };
+    }
+
+    internal static string? EpisodeLine(MediaSnapshot media)
+    {
+        var code = media.Season is not null && media.Episode is not null
+            ? $"S{media.Season}E{media.Episode}"
+            : media.Episode is not null ? $"E{media.Episode}" : null;
+        if (code is null)
+        {
+            return media.Title;
+        }
+
+        return string.IsNullOrWhiteSpace(media.Title) ? code : $"{code} · {media.Title}";
+    }
+
+    internal static string? ResolveImage(MediaSnapshot media, PluginConfiguration cfg)
+    {
+        // Jellyfin's image endpoint is anonymous: never put an api_key in this URL,
+        // it is visible to anyone looking at the profile.
+        if (Uri.TryCreate(cfg.PublicUrl?.Trim(), UriKind.Absolute, out var baseUri)
+            && baseUri.Scheme == Uri.UriSchemeHttps
+            && !baseUri.IsLoopback)
+        {
+            var id = media.ImageItemId == Guid.Empty ? media.ItemId : media.ImageItemId;
+            var url = $"{baseUri.AbsoluteUri.TrimEnd('/')}/Items/{id:N}/Images/Primary?fillHeight=512&quality=90";
+            if (url.Length <= 300)
+            {
+                return url;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(cfg.FallbackImage) ? null : cfg.FallbackImage.Trim();
+    }
+
+    private static string Coalesce(string? a, string b) => string.IsNullOrWhiteSpace(a) ? b : a;
+
+    /// <summary>Discord wants 2..128 chars.</summary>
+    internal static string? Fit(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s))
+        {
+            return null;
+        }
+
+        s = s.Trim();
+        if (s.Length > MaxText)
+        {
+            s = string.Concat(s.AsSpan(0, MaxText - 1), "…");
+        }
+
+        return s.Length < 2 ? s.PadRight(2, '⠀') : s;
+    }
+}

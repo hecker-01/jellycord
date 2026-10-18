@@ -1,0 +1,70 @@
+# Push a tag like v0.1.0 to build the plugin zip, attach it to a GitHub release,
+# and add the version to manifest.json (the Jellyfin plugin repository) on main.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Version from tag
+        id: v
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          echo "version=${tag}.0" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          dotnet test Jellycord.sln -c Release
+          dotnet publish src/Jellyfin.Plugin.Jellycord -c Release -o out \
+            -p:Version=${{ steps.v.outputs.version }} \
+            -p:AssemblyVersion=${{ steps.v.outputs.version }} \
+            -p:FileVersion=${{ steps.v.outputs.version }}
+
+      - name: Package
+        id: pkg
+        run: |
+          zip="jellycord_${{ steps.v.outputs.version }}.zip"
+          (cd out && zip -j "../$zip" Jellyfin.Plugin.Jellycord.dll)
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "md5=$(md5sum "$zip" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.v.outputs.tag }}" "${{ steps.pkg.outputs.zip }}" \
+            --title "Jellycord ${{ steps.v.outputs.tag }}" --generate-notes
+
+      - name: Update manifest.json
+        run: |
+          git checkout main
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.v.outputs.tag }}/${{ steps.pkg.outputs.zip }}"
+          jq --arg v "${{ steps.v.outputs.version }}" \
+             --arg url "$url" \
+             --arg md5 "${{ steps.pkg.outputs.md5 }}" \
+             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+             --arg log "See https://github.com/${GITHUB_REPOSITORY}/releases/tag/${{ steps.v.outputs.tag }}" \
+             '.[0].versions = ([{version: $v, changelog: $log, targetAbi: "12.0.0.0", sourceUrl: $url, checksum: $md5, timestamp: $ts}]
+                + (.[0].versions | map(select(.version != $v))))' \
+             manifest.json > manifest.tmp && mv manifest.tmp manifest.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "manifest: add ${{ steps.v.outputs.version }}"
+          git push origin main
