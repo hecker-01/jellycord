@@ -14,6 +14,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<CredentialStore>();
         serviceCollection.AddSingleton<DiscordClient>();
         serviceCollection.AddSingleton<HeadlessSessionSink>();
+        serviceCollection.AddSingleton<ArtworkResolver>();
         serviceCollection.AddSingleton<IPresenceSink>(sp => sp.GetRequiredService<HeadlessSessionSink>());
         serviceCollection.AddSingleton<PlaybackTracker>();
         serviceCollection.AddHostedService(sp => sp.GetRequiredService<PlaybackTracker>());

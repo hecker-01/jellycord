@@ -23,6 +23,13 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public string FallbackImage { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Last-resort poster source for private servers: upload the local poster to Litterbox
+    /// (catbox.moe), a public temporary host that deletes files after 72 hours. Off by default
+    /// because it publishes your artwork to a third party.
+    /// </summary>
+    public bool UploadArtwork { get; set; }
+
     /// <summary>Small playing/paused badge on the corner of the poster.</summary>
     public bool ShowStatusIcon { get; set; } = true;
 

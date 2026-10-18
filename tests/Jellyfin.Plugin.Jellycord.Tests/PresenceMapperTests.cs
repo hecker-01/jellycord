@@ -118,6 +118,29 @@ public class PresenceMapperTests
     }
 
     [Fact]
+    public void LookedUpArtwork_BeatsFallback_ButNotPublicUrl()
+    {
+        const string tmdb = "https://image.tmdb.org/t/p/w500/abc.jpg";
+        Assert.Equal(tmdb, PresenceMapper.Map(Episode(), 0, false, Now, new PluginConfiguration(), tmdb)!.LargeImage);
+
+        var pub = new PluginConfiguration { PublicUrl = "https://jf.example.com" };
+        Assert.StartsWith("https://jf.example.com/", PresenceMapper.Map(Episode(), 0, false, Now, pub, tmdb)!.LargeImage);
+    }
+
+    [Fact]
+    public void TmdbOriginals_AreShrunk()
+        => Assert.Equal(
+            "https://image.tmdb.org/t/p/w500/x.jpg",
+            ArtworkResolver.Shrink("https://image.tmdb.org/t/p/original/x.jpg"));
+
+    [Theory]
+    [InlineData("https://image.tmdb.org/t/p/w500/x.jpg", true)]
+    [InlineData("http://image.tmdb.org/x.jpg", false)]
+    [InlineData("https://localhost/x.jpg", false)]
+    [InlineData("/config/metadata/x.jpg", false)]
+    public void OnlyPublicHttpsUrlsCount(string url, bool ok) => Assert.Equal(ok, ArtworkResolver.IsPublicHttps(url));
+
+    [Fact]
     public void Text_IsPaddedAndTruncated()
     {
         Assert.Equal(2, PresenceMapper.Fit("X")!.Length);

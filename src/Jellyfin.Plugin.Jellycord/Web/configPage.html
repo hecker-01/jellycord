@@ -38,8 +38,10 @@
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="PublicUrl">Public server URL</label>
                         <input id="PublicUrl" name="PublicUrl" type="url" is="emby-input" placeholder="https://jellyfin.example.com" />
-                        <div class="fieldDescription">Optional. Must be HTTPS and reachable from the internet so Discord can fetch posters. No API key is ever added to image URLs.</div>
+                        <div class="fieldDescription">Optional. Only set this if the server is reachable from the internet over HTTPS; Discord then loads posters straight from it. No API key is ever added to image URLs. Leave empty for LAN/Tailscale/VPN-only servers.</div>
                     </div>
+                    <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="UploadArtwork" /><span>Upload posters to a temporary public host when nothing else works</span></label>
+                    <div class="fieldDescription" style="margin-bottom:1.5em">Without a public URL, Jellycord first uses the poster's original source (TMDB, MusicBrainz…) through your server's metadata providers. This option is a last resort for items with no online match: the poster is uploaded to Litterbox (catbox.moe) and deleted after 72 hours. It publishes your artwork to a third party, so it's off by default.</div>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="FallbackImage">Fallback image</label>
                         <input id="FallbackImage" name="FallbackImage" type="text" is="emby-input" placeholder="Jellycord logo" />
@@ -78,7 +80,7 @@
         (function () {
             var pluginId = '92be543f-9182-4590-8b3a-7cdab36f3ef1';
             var page = document.querySelector('#JellycordConfigPage');
-            var bools = ['ShowMovies', 'ShowEpisodes', 'ShowMusic', 'ShowWhenPaused', 'ShowStatusIcon'];
+            var bools = ['ShowMovies', 'ShowEpisodes', 'ShowMusic', 'ShowWhenPaused', 'ShowStatusIcon', 'UploadArtwork'];
             var texts = ['ClientId', 'PublicUrl', 'FallbackImage'];
 
             function esc(s) {

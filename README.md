@@ -38,7 +38,8 @@ Manual install: download the zip from [Releases](https://github.com/hecker-01/je
 Dashboard → Plugins → **Jellycord**:
 
 - **Application ID**: from step 1.
-- **Public server URL** (optional): `https://jellyfin.example.com`. Discord must be able to reach it for posters to show. Image URLs never include an API key.
+- **Public server URL** (optional): set this only if your server is reachable from the internet over HTTPS (`https://jellyfin.example.com`). Discord then loads posters straight from it. Image URLs never include an API key. Leave it empty for LAN, Tailscale or VPN-only servers (see [Posters on private servers](#posters-on-private-servers)).
+- **Upload posters as a last resort** (optional, off): see below.
 - **Fallback image** (optional): shown when there's no poster. Leave it empty for the Jellycord logo, or use an https image URL, an art asset key from your Discord app, or `none`.
 - **Status badge**: a small playing/paused icon on the corner of the artwork (on by default).
 - Choose what to show (movies / episodes / music), whether to keep the status while paused, and the clear delay.
@@ -61,7 +62,19 @@ Each user opens **`https://<your-jellyfin>/Jellycord/Link`** while signed in to 
 | Music | **Listening to** *Track* · `by Artist · Album` · album art |
 | Paused | Same, with "Paused" and no progress bar (or cleared, if configured). Discord shows its own small elapsed timer here. |
 
-Without a public server URL, the Jellycord logo is shown instead of the poster. Theme songs, trailers and other extras are ignored. If a user plays on several devices at once, the one actually playing wins.
+Theme songs, trailers and other extras are ignored. If a user plays on several devices at once, the one actually playing wins.
+
+### Posters on private servers
+
+Discord fetches images from the internet, so it can't load posters from a server behind Tailscale, a VPN or your LAN. Jellycord works around this without exposing your server:
+
+1. **Original source (automatic).** Jellycord asks your server's own metadata providers (TMDB, MusicBrainz/Cover Art Archive, TheAudioDB, etc.) for the item's poster and hands Discord that public URL. This uses the providers and keys Jellyfin already has, so there's nothing to configure. It covers anything Jellyfin matched online: movies, shows (series poster) and most music.
+2. **Temporary upload (opt-in).** For items with no online match (home videos, unmatched files), you can let Jellycord upload the local poster to [Litterbox](https://litterbox.catbox.moe), which deletes it after 72 hours. This publishes that artwork to a third party, so it's off by default.
+3. **Fallback.** Otherwise the Jellycord logo is shown (or your own fallback image).
+
+Results are cached per item. To check what Discord would get for an item, call `GET /Jellycord/Preview/{itemId}` as an admin. It returns the activity JSON and which image source was used.
+
+Avoid exposing the whole server with Tailscale Funnel just for posters. Option 1 covers almost everything without opening anything up.
 
 ## Privacy and caveats
 
@@ -110,7 +123,6 @@ Push a tag like `v0.1.0`. The release workflow builds the zip, creates a GitHub 
 
 ## Roadmap
 
-- Poster lookups for LAN-only servers (TMDB, Cover Art Archive, opt-in temporary image host)
 - Desktop companion sink (local Discord RPC) as a fallback
 - IMDb / TMDB buttons, custom text templates, library allow/deny lists
 - Jellyfin 10.11 build

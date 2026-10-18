@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Jellyfin.Plugin.Jellycord.Discord;
 using Jellyfin.Plugin.Jellycord.Playback;
+using Jellyfin.Plugin.Jellycord.Presence;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
@@ -25,6 +26,8 @@ public class JellycordController : ControllerBase
     private readonly PlaybackTracker _tracker;
     private readonly CredentialStore _store;
     private readonly IUserManager _userManager;
+    private readonly ILibraryManager _libraryManager;
+    private readonly ArtworkResolver _artwork;
     private readonly ILogger<JellycordController> _logger;
 
     public JellycordController(
@@ -33,6 +36,8 @@ public class JellycordController : ControllerBase
         PlaybackTracker tracker,
         CredentialStore store,
         IUserManager userManager,
+        ILibraryManager libraryManager,
+        ArtworkResolver artwork,
         ILogger<JellycordController> logger)
     {
         _discord = discord;
@@ -40,6 +45,8 @@ public class JellycordController : ControllerBase
         _tracker = tracker;
         _store = store;
         _userManager = userManager;
+        _libraryManager = libraryManager;
+        _artwork = artwork;
         _logger = logger;
     }
 
@@ -211,6 +218,27 @@ public class JellycordController : ControllerBase
     [HttpPost("Accounts/{userId}/Unlink")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public Task<ActionResult> Unlink([FromRoute] Guid userId, CancellationToken ct) => UnlinkCoreAsync(userId, ct);
+
+    /// <summary>Shows what Discord would get for an item: the activity JSON, including which image is used.</summary>
+    [HttpGet("Preview/{itemId}")]
+    [Authorize(Policy = Policies.RequiresElevation)]
+    public async Task<ActionResult> Preview([FromRoute] Guid itemId)
+    {
+        var cfg = Plugin.Instance!.Configuration;
+        var item = _libraryManager.GetItemById(itemId);
+        var media = item is null ? null : MediaSnapshotFactory.Create(item);
+        if (media is null)
+        {
+            return NotFound(new { error = "No playable movie, episode or track with that ID." });
+        }
+
+        var artwork = await _artwork.ResolveAsync(media, cfg).ConfigureAwait(false);
+        var activity = PresenceMapper.Map(media, 0, false, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), cfg, artwork);
+        var source = PresenceMapper.PublicPosterUrl(media, cfg) is not null ? "public-url"
+            : artwork is not null ? "lookup"
+            : activity?.LargeImage is null ? "none" : "fallback";
+        return Ok(new { imageSource = source, activity = activity?.ToJson(cfg.ClientId) });
+    }
 
     [HttpGet("ClientSecret")]
     [Authorize(Policy = Policies.RequiresElevation)]

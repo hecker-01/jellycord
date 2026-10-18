@@ -14,8 +14,9 @@ public static class PresenceMapper
     public const string PausedIconUrl = AssetBase + "paused.png";
 
     /// <summary>Returns null when this item shouldn't be shown at all.</summary>
+    /// <param name="artworkUrl">A public poster found by <see cref="ArtworkResolver"/>, if any.</param>
     public static PresenceActivity? Map(
-        MediaSnapshot media, long positionTicks, bool paused, long nowMs, PluginConfiguration cfg)
+        MediaSnapshot media, long positionTicks, bool paused, long nowMs, PluginConfiguration cfg, string? artworkUrl = null)
     {
         if (paused && !cfg.ShowWhenPaused)
         {
@@ -63,7 +64,7 @@ public static class PresenceMapper
             end = start + (media.RunTimeTicks.Value / TimeSpan.TicksPerMillisecond);
         }
 
-        var largeImage = ResolveImage(media, cfg);
+        var largeImage = ResolveImage(media, cfg, artworkUrl);
         var showBadge = cfg.ShowStatusIcon && largeImage is not null;
 
         return new PresenceActivity
@@ -94,7 +95,30 @@ public static class PresenceMapper
         return string.IsNullOrWhiteSpace(media.Title) ? code : $"{code} · {media.Title}";
     }
 
-    internal static string? ResolveImage(MediaSnapshot media, PluginConfiguration cfg)
+    internal static string? ResolveImage(MediaSnapshot media, PluginConfiguration cfg, string? artworkUrl = null)
+    {
+        var direct = PublicPosterUrl(media, cfg);
+        if (direct is not null)
+        {
+            return direct;
+        }
+
+        if (!string.IsNullOrEmpty(artworkUrl))
+        {
+            return artworkUrl;
+        }
+
+        var fallback = cfg.FallbackImage?.Trim();
+        if (string.IsNullOrEmpty(fallback))
+        {
+            return LogoUrl;
+        }
+
+        return fallback.Equals("none", StringComparison.OrdinalIgnoreCase) ? null : fallback;
+    }
+
+    /// <summary>The poster straight from this server, when it has a public HTTPS URL.</summary>
+    public static string? PublicPosterUrl(MediaSnapshot media, PluginConfiguration cfg)
     {
         // Jellyfin's image endpoint is anonymous: never put an api_key in this URL,
         // it is visible to anyone looking at the profile.
@@ -110,13 +134,7 @@ public static class PresenceMapper
             }
         }
 
-        var fallback = cfg.FallbackImage?.Trim();
-        if (string.IsNullOrEmpty(fallback))
-        {
-            return LogoUrl;
-        }
-
-        return fallback.Equals("none", StringComparison.OrdinalIgnoreCase) ? null : fallback;
+        return null;
     }
 
     private static string Coalesce(string? a, string b) => string.IsNullOrWhiteSpace(a) ? b : a;

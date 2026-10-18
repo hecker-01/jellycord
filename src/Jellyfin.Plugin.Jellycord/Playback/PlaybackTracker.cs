@@ -16,8 +16,12 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan ReconcileEvery = TimeSpan.FromSeconds(30);
 
+    /// <summary>How long a new item may wait for its poster lookup before going out with the fallback image.</summary>
+    private const long ArtworkWaitMs = 4_000;
+
     private readonly ISessionManager _sessionManager;
     private readonly IPresenceSink _sink;
+    private readonly ArtworkResolver? _artwork;
     private readonly ILogger<PlaybackTracker> _logger;
     private readonly TimeProvider _time;
     private readonly Lock _lock = new();
@@ -26,15 +30,16 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
     private Task? _loop;
     private DateTimeOffset _lastReconcile;
 
-    public PlaybackTracker(ISessionManager sessionManager, IPresenceSink sink, ILogger<PlaybackTracker> logger)
-        : this(sessionManager, sink, logger, TimeProvider.System)
+    public PlaybackTracker(ISessionManager sessionManager, IPresenceSink sink, ArtworkResolver artwork, ILogger<PlaybackTracker> logger)
+        : this(sessionManager, sink, artwork, logger, TimeProvider.System)
     {
     }
 
-    internal PlaybackTracker(ISessionManager sessionManager, IPresenceSink sink, ILogger<PlaybackTracker> logger, TimeProvider time)
+    internal PlaybackTracker(ISessionManager sessionManager, IPresenceSink sink, ArtworkResolver? artwork, ILogger<PlaybackTracker> logger, TimeProvider time)
     {
         _sessionManager = sessionManager;
         _sink = sink;
+        _artwork = artwork;
         _logger = logger;
         _time = time;
     }
@@ -126,16 +131,19 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
             return;
         }
 
-        var report = new PlaybackReport(
-            media,
-            e.PlaybackPositionTicks ?? e.Session.PlayState?.PositionTicks ?? 0,
-            e.IsPaused,
-            NowMs);
-
+        var now = NowMs;
         lock (_lock)
         {
             var user = GetUser(e.Session.UserId);
-            user.Sessions[e.Session.Id] = report;
+            user.Sessions.TryGetValue(e.Session.Id, out var previous);
+            var sameItem = previous?.Media.ItemId == media.ItemId;
+            user.Sessions[e.Session.Id] = new PlaybackReport(
+                media,
+                e.PlaybackPositionTicks ?? e.Session.PlayState?.PositionTicks ?? 0,
+                e.IsPaused,
+                now,
+                sameItem ? previous!.ItemSinceMs : now,
+                sameItem ? previous!.Artwork : null);
             user.StoppedAtMs = null;
         }
     }
@@ -247,13 +255,32 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
                     continue;
                 }
 
-                var best = user.Sessions.Values
-                    .OrderBy(r => r.Paused)
-                    .ThenByDescending(r => r.ReportedAtMs)
+                var bestPair = user.Sessions
+                    .OrderBy(kv => kv.Value.Paused)
+                    .ThenByDescending(kv => kv.Value.ReportedAtMs)
                     .FirstOrDefault();
+                var best = bestPair.Value;
+                string? artwork = null;
+                if (best is not null && _artwork is not null)
+                {
+                    // look up the poster lazily, only for users we can actually show
+                    if (best.Artwork is null)
+                    {
+                        best = best with { Artwork = _artwork.ResolveAsync(best.Media, cfg) };
+                        user.Sessions[bestPair.Key] = best;
+                    }
+
+                    if (!best.Artwork!.IsCompleted && now - best.ItemSinceMs < ArtworkWaitMs)
+                    {
+                        continue;
+                    }
+
+                    artwork = best.Artwork.IsCompletedSuccessfully ? best.Artwork.Result : null;
+                }
+
                 var desired = best is null
                     ? null
-                    : PresenceMapper.Map(best.Media, best.PositionTicks, best.Paused, best.ReportedAtMs, cfg);
+                    : PresenceMapper.Map(best.Media, best.PositionTicks, best.Paused, best.ReportedAtMs, cfg, artwork);
 
                 var action = PresenceDecision.Decide(
                     user.LastSent,
@@ -329,7 +356,13 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
 
     public void Dispose() => _cts?.Dispose();
 
-    private sealed record PlaybackReport(MediaSnapshot Media, long PositionTicks, bool Paused, long ReportedAtMs);
+    private sealed record PlaybackReport(
+        MediaSnapshot Media,
+        long PositionTicks,
+        bool Paused,
+        long ReportedAtMs,
+        long ItemSinceMs,
+        Task<string?>? Artwork);
 
     private sealed class UserState
     {
