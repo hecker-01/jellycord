@@ -218,10 +218,19 @@ static void Step(string label, int status, JsonNode? body)
     Console.WriteLine($"[{status}] {label}: {shown?.ToJsonString() ?? "(empty)"}");
 }
 
-static void Pause(string msg)
+void Pause(string msg)
 {
     Console.WriteLine();
     Console.WriteLine($">> {msg}");
+    if (Console.IsInputRedirected)
+    {
+        // unattended (e.g. run from a script): hold each state long enough to look at it
+        var hold = int.Parse(opts.GetValueOrDefault("hold", "60"));
+        Console.WriteLine($"   Holding for {hold}s...");
+        Thread.Sleep(TimeSpan.FromSeconds(hold));
+        return;
+    }
+
     Console.WriteLine("   Press Enter to continue...");
     Console.ReadLine();
 }

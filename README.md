@@ -2,7 +2,7 @@
 
 A Jellyfin plugin that shows what you're watching as your **Discord status**: "Watching Breaking Bad · S5E14 · Ozymandias", with the poster and a live progress bar. It works for every user on the server who links their Discord, on any device (TV, phone, browser). Nobody needs the Discord desktop app running.
 
-> **Status: early (v0.1, Jellyfin 12.x).** Built against Jellyfin 12.0 / .NET 10, and loads and tracks playback on 12.2. The Discord side uses an undocumented endpoint, so please report what works and what doesn't.
+> **Status: early (v0.1, Jellyfin 12.x).** Built against Jellyfin 12.0 / .NET 10, and loads and tracks playback on 12.2. The Discord headless-sessions flow (link, set, pause, delete) was checked against a real Discord app in October 2026. It's an undocumented endpoint, so please report what works and what doesn't.
 
 ## Why not a bot token?
 
@@ -51,7 +51,7 @@ Each user opens **`https://<your-jellyfin>/Jellycord/Link`** while signed in to 
 | Episode | **Watching** *Series* · `S1E2 · Episode title` · series poster · progress bar |
 | Movie | **Watching** *Title* · year · poster · progress bar |
 | Music | **Listening to** *Track* · `by Artist · Album` · album art |
-| Paused | Same, with "Paused" and no progress bar (or cleared, if configured) |
+| Paused | Same, with "Paused" and no progress bar (or cleared, if configured). Discord shows its own small elapsed timer here. |
 
 Theme songs, trailers and other extras are ignored. If a user plays on several devices at once, the one actually playing wins.
 
