@@ -197,7 +197,7 @@
             }
             if (me.linked) {
                 box.innerHTML =
-                    '<div class="listItem" style="padding-left:0"><span class="material-icons listItemIcon" style="background:#3ecf6e !important;color:#fff !important" aria-hidden="true">check</span>' +
+                    '<div class="listItem" style="padding-left:0"><span class="material-icons listItemIcon" style="background:#3ecf6e" aria-hidden="true">check</span>' +
                     '<div class="listItemBody"><div class="listItemBodyText">Linked to <b>' + esc(me.discordName) + '</b></div>' +
                     (me.needsRelink ? '<div class="listItemBodyText secondary">Discord rejected the saved link. Link again to resume.</div>' : '') +
                     '</div></div>' +
