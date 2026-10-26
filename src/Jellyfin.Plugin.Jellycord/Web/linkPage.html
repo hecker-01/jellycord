@@ -7,10 +7,12 @@
     <style>
         :root {
             --bg: #101010; --card: #1c1c1e; --text: #f2f2f2; --muted: #a0a0a8;
-            --accent: #5865f2; --accent-2: #00a4dc; --danger: #e5484d; --border: #2c2c30;
+            --accent: #5865f2; --accent-2: #00a4dc; --danger: #ff6b6b; --ok: #3ecf8e; --border: #2c2c30;
         }
         @media (prefers-color-scheme: light) {
-            :root { --bg: #f4f4f6; --card: #fff; --text: #18181b; --muted: #5c5c66; --border: #e2e2e8; }
+            /* darker accents: the dark-theme ones are under 4.5:1 contrast on white */
+            :root { --bg: #f4f4f6; --card: #fff; --text: #18181b; --muted: #5c5c66; --border: #e2e2e8;
+                    --accent-2: #00658a; --danger: #c4282d; --ok: #1a7f4b; }
         }
         * { box-sizing: border-box; }
         body {
@@ -36,7 +38,7 @@
         }
         .status { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
         .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
-        .dot.ok { background: #3ecf8e; }
+        .dot.ok { background: var(--ok); }
         .note { font-size: .85rem; color: var(--muted); margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
         a { color: var(--accent-2); }
         .error { color: var(--danger); margin-top: 12px; }
@@ -52,7 +54,9 @@
             width: 100%; font: inherit; color: var(--text); background: transparent;
             border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-top: 6px;
         }
-        .saved { color: #3ecf8e; font-size: .9rem; margin-left: 8px; }
+        .saved { color: var(--ok); font-size: .9rem; margin-left: 8px; }
+        fieldset { border: 0; padding: 0; margin: 14px 0 0; min-width: 0; }
+        legend { padding: 0; }
         button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); width: auto; padding: 8px 16px; margin-top: 12px; }
     </style>
 </head>
@@ -84,26 +88,28 @@
         <button id="linkBtn">Link Discord</button>
     </div>
 
-    <div id="pending" hidden>
+    <div id="pending" hidden aria-live="polite">
         <p>Open <a id="verifyLink" target="_blank" rel="noopener">discord.com/activate</a> and approve this code:</p>
         <div class="code" id="userCode"></div>
         <p class="sub">Waiting for approval…</p>
     </div>
 
-    <div class="error" id="error" hidden></div>
+    <div class="error" id="error" role="alert" hidden></div>
 
     <section class="privacy" id="privacy" hidden>
         <h2>Your privacy</h2>
-        <p class="sub">Private items only show "Watching <span class="serverName">the server</span>": no title, poster or progress.</p>
-        <label class="row"><input type="checkbox" id="alwaysPrivate"><span>Keep everything private<small>Never show what I'm playing, only that I'm on <span class="serverName">the server</span>.</small></span></label>
+        <p class="sub">Private items only show "Watching Jellyfin": no title, poster or progress.</p>
+        <label class="row"><input type="checkbox" id="alwaysPrivate"><span>Keep everything private<small>Never show what I'm playing, only "Watching Jellyfin".</small></span></label>
         <div id="libsWrap">
-            <div class="sub" style="margin:14px 0 0">Private libraries</div>
-            <div class="libs" id="libs"></div>
+            <fieldset>
+                <legend class="sub" style="margin:0">Private libraries</legend>
+                <div class="libs" id="libs"></div>
+            </fieldset>
             <label for="tags" class="sub" style="display:block;margin-top:14px">My private tags (comma-separated)</label>
             <input type="text" id="tags" maxlength="1000" placeholder="e.g. guilty-pleasure, anime">
             <p class="sub" id="adminRules" style="font-size:.85rem;margin-top:10px"></p>
         </div>
-        <button class="ghost" id="saveBtn">Save</button><span class="saved" id="saved" hidden>Saved</span>
+        <button class="ghost" id="saveBtn">Save</button><span class="saved" id="saved" role="status"></span>
     </section>
 
     <p class="note">
@@ -123,26 +129,18 @@
     var pollTimer = null;
     var userId = null;
 
-    function apiJson(method, path, body) {
-        return fetch(base + path, {
-            method: method,
-            headers: { 'Authorization': auth, 'Content-Type': 'application/json' },
-            body: body ? JSON.stringify(body) : undefined
-        }).then(function (r) {
-            if (!r.ok) { throw new Error('HTTP ' + r.status); }
-            return r.json();
-        });
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
-
-    function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
 
     function loadPrivacy() {
         Promise.all([
-            apiJson('GET', '/Jellycord/Me/Settings'),
-            userId ? apiJson('GET', '/UserViews?userId=' + encodeURIComponent(userId)) : Promise.resolve({ Items: [] })
+            api('GET', '/Jellycord/Me/Settings'),
+            userId ? api('GET', '/UserViews?userId=' + encodeURIComponent(userId)) : Promise.resolve({ Items: [] })
         ]).then(function (r) {
             var s = r[0].settings, admin = r[0].admin, views = (r[1].Items || []);
-            document.querySelectorAll('.serverName').forEach(function (el) { el.textContent = r[0].serverName || 'the server'; });
             var norm = function (id) { return String(id).replace(/-/g, '').toLowerCase(); };
             var adminLibs = (admin.privateLibraryIds || []).map(norm);
             var mine = (s.PrivateLibraryIds || []).map(norm);
@@ -181,14 +179,32 @@
         return id;
     }
 
-    function api(method, path) {
-        return fetch(base + path, { method: method, headers: { 'Authorization': auth } }).then(function (r) {
-            return r.text().then(function (t) {
-                var body = t ? JSON.parse(t) : {};
-                if (!r.ok) { throw new Error(body.error || ('HTTP ' + r.status)); }
-                return body;
+    function statusMessage(status) {
+        if (status === 401) { return 'Your Jellyfin sign-in has expired. Sign in to Jellyfin again, then reload this page.'; }
+        if (status === 403) { return 'Jellyfin refused the request.'; }
+        if (status >= 500) { return 'The server (or a proxy in front of it) is not responding properly. Try again in a moment.'; }
+        return 'Request failed (HTTP ' + status + ').';
+    }
+
+    function api(method, path, body) {
+        var headers = { 'Authorization': auth };
+        if (body !== undefined) { headers['Content-Type'] = 'application/json'; }
+        return fetch(base + path, { method: method, headers: headers, body: body === undefined ? undefined : JSON.stringify(body) })
+            .catch(function () { throw new Error('Could not reach the server. Check your connection and try again.'); })
+            .then(function (r) {
+                return r.text().then(function (t) {
+                    // a proxy error page is HTML, not JSON
+                    var parsed = null;
+                    try { parsed = t ? JSON.parse(t) : {}; } catch (e) { }
+                    if (!r.ok) {
+                        var err = new Error((parsed && parsed.error) || statusMessage(r.status));
+                        err.status = r.status;
+                        throw err;
+                    }
+                    if (parsed === null) { throw new Error(statusMessage(r.status)); }
+                    return parsed;
+                });
             });
-        });
     }
 
     // Only ever use a token that this exact server issued: match on server Id,
@@ -217,23 +233,30 @@
 
     function startLink() {
         fail('');
+        // open the tab now, while we still have the click: a window.open after the request is often blocked
+        var tab = window.open('about:blank', '_blank');
+        if (tab) { tab.opener = null; }
         api('POST', '/Jellycord/Me/Link').then(function (p) {
+            if (tab) { tab.location.href = p.verificationUri; }
             $('userCode').textContent = p.userCode;
             $('verifyLink').href = p.verificationUri;
             $('verifyLink').textContent = p.verificationUri.replace(/^https?:\/\//, '').replace(/\?.*$/, '');
             show('pending');
-            window.open(p.verificationUri, '_blank', 'noopener');
             clearInterval(pollTimer);
             pollTimer = setInterval(poll, 3000);
-        }).catch(function (e) { fail(e.message); });
+        }).catch(function (e) {
+            if (tab) { tab.close(); }
+            fail(e.message);
+        });
     }
 
     function poll() {
         api('GET', '/Jellycord/Me/Link').then(function (r) {
             if (r.status === 'pending') { return; }
             clearInterval(pollTimer);
-            if (r.status === 'failed') { fail('Linking failed: ' + r.error); }
-            if (r.status === 'expired') { fail('The code expired. Try again.'); }
+            if (r.status === 'failed') { fail('Linking failed' + (r.error ? ': ' + r.error : '.') + ' Try again.'); }
+            if (r.status === 'expired') { fail('The code expired before it was approved. Try again.'); }
+            if (r.status === 'none') { fail('The link request was lost, for example because the server restarted. Try again.'); }
             refresh();
         }).catch(function (e) { clearInterval(pollTimer); fail(e.message); refresh(); });
     }
@@ -241,6 +264,7 @@
     $('linkBtn').onclick = startLink;
     $('relinkBtn').onclick = startLink;
     $('unlinkBtn').onclick = function () {
+        if (!window.confirm('Unlink Discord? Your status stops updating until you link again.')) { return; }
         this.disabled = true;
         var btn = this;
         api('POST', '/Jellycord/Me/Unlink').catch(function (e) { fail(e.message); }).then(function () {
@@ -251,22 +275,27 @@
     $('alwaysPrivate').onchange = syncLibs;
     $('saveBtn').onclick = function () {
         var libs = Array.prototype.map.call(document.querySelectorAll('#libs input:checked:not(:disabled)'), function (c) { return c.getAttribute('data-lib'); });
-        apiJson('POST', '/Jellycord/Me/Settings', {
+        fail('');
+        api('POST', '/Jellycord/Me/Settings', {
             AlwaysPrivate: $('alwaysPrivate').checked, PrivateLibraryIds: libs, PrivateTags: $('tags').value
         }).then(function () {
-            $('saved').hidden = false;
-            setTimeout(function () { $('saved').hidden = true; }, 2000);
+            $('saved').textContent = 'Saved';
+            setTimeout(function () { $('saved').textContent = ''; }, 2000);
         }).catch(function (e) { fail('Saving failed: ' + e.message); });
     };
     $('gotoWeb').onclick = function () { location.href = base + '/web/'; };
 
     findToken().then(function (token) {
         if (!token) { return show('signin'); }
-        auth = 'MediaBrowser Client="Jellycord", Device="Browser", DeviceId="' + deviceId() + '", Version="0.1.0", Token="' + token + '"';
+        auth = 'MediaBrowser Client="Jellycord", Device="Browser", DeviceId="' + deviceId() + '", Version="0.2.0", Token="' + token + '"';
         return refresh().then(function () {
             if ($('unconfigured').hidden) { loadPrivacy(); }
         });
-    }).catch(function (e) { show('signin'); fail(e.message); });
+    }).catch(function (e) {
+        // a stale token in this browser: send them through sign-in rather than show a bare error
+        show('signin');
+        fail(e.status === 401 ? '' : e.message);
+    });
 })();
 </script>
 </body>

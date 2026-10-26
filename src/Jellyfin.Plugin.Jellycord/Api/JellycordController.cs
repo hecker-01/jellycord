@@ -29,6 +29,9 @@ public class JellycordController : ControllerBase
 
     private static readonly ConcurrentDictionary<Guid, PendingLink> Pending = new();
 
+    // one StartLink per user at a time, so a double click can't mint two device codes
+    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> StartGates = new();
+
     private readonly DiscordClient _discord;
     private readonly HeadlessSessionSink _sink;
     private readonly PlaybackTracker _tracker;
@@ -72,7 +75,16 @@ public class JellycordController : ControllerBase
     public ActionResult GetLinkPage()
     {
         var stream = typeof(Plugin).Assembly.GetManifestResourceStream("Jellyfin.Plugin.Jellycord.Web.linkPage.html");
-        return stream is null ? NotFound() : File(stream, "text/html; charset=utf-8");
+        if (stream is null)
+        {
+            return NotFound();
+        }
+
+        // it signs in with the browser's Jellyfin token, so no other site may frame it (clickjacking)
+        Response.Headers.XFrameOptions = "DENY";
+        Response.Headers.ContentSecurityPolicy = "frame-ancestors 'none'";
+        Response.Headers.XContentTypeOptions = "nosniff";
+        return File(stream, "text/html; charset=utf-8");
     }
 
     /// <summary>Script File Transformation injects into jellyfin-web (user menu entry + native page).</summary>
@@ -86,7 +98,9 @@ public class JellycordController : ControllerBase
             return NotFound();
         }
 
+        // index.html requests this with ?v=<content hash>, so a changed script is fetched right away
         Response.Headers.CacheControl = "public, max-age=3600";
+        Response.Headers.XContentTypeOptions = "nosniff";
         return File(stream, "application/javascript; charset=utf-8");
     }
 
@@ -121,12 +135,27 @@ public class JellycordController : ControllerBase
             return BadRequest(new { error = "The server admin hasn't set up a Discord application yet." });
         }
 
-        // reuse a live code rather than minting new ones on every click
-        if (Pending.TryGetValue(id, out var live) && DateTimeOffset.UtcNow < live.ExpiresAt)
+        PruneExpiredLinks();
+        var gate = StartGates.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            return Ok(live.ToDto());
-        }
+            // reuse a live code rather than minting new ones on every click
+            if (Pending.TryGetValue(id, out var live) && DateTimeOffset.UtcNow < live.ExpiresAt)
+            {
+                return Ok(live.ToDto());
+            }
 
+            return await StartLinkCoreAsync(id, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<ActionResult> StartLinkCoreAsync(Guid id, CancellationToken ct)
+    {
         var res = await _discord.DeviceAuthorizeAsync(ct).ConfigureAwait(false);
         var body = res.Body;
         var deviceCode = body.Str("device_code");
@@ -137,6 +166,13 @@ public class JellycordController : ControllerBase
             _logger.LogWarning("Discord device authorize failed: {Status} {Body}", res.Status, res.Body?.ToJsonString());
             var hint = res.Status == 401 ? " Turn on 'Public Client' in the Discord app's OAuth2 settings, or set the client secret." : string.Empty;
             return StatusCode(502, new { error = $"Discord rejected the link request ({res.Status}).{hint}" });
+        }
+
+        // the browser opens this link, so only ever hand out a Discord one
+        if (!IsDiscordUrl(verificationUri))
+        {
+            _logger.LogWarning("Discord returned an unexpected verification URL; not using it");
+            return StatusCode(502, new { error = "Discord returned an unexpected link. Try again later." });
         }
 
         var pending = new PendingLink
@@ -309,7 +345,7 @@ public class JellycordController : ControllerBase
         // admin rules only; per-user rules can add to this
         media = media with { IsPrivate = _privacy.IsPrivate(item!, cfg) };
         var artwork = media.IsPrivate ? null : await _artwork.ResolveAsync(media, cfg).ConfigureAwait(false);
-        var activity = PresenceMapper.Map(media, 0, false, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), cfg, artwork, _host.FriendlyName);
+        var activity = PresenceMapper.Map(media, 0, false, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), cfg, artwork);
         var source = PresenceMapper.PublicPosterUrl(media, cfg) is not null ? "public-url"
             : artwork is not null ? "lookup"
             : activity?.LargeImage is null ? "none" : "fallback";
@@ -335,6 +371,26 @@ public class JellycordController : ControllerBase
     }
 
     // ---------------------------------------------------------------- helpers
+
+    internal static bool IsDiscordUrl(string url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var u)
+           && u.Scheme == Uri.UriSchemeHttps
+           && string.IsNullOrEmpty(u.UserInfo)
+           && (u.Host.Equals("discord.com", StringComparison.OrdinalIgnoreCase)
+               || u.Host.EndsWith(".discord.com", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Drops link codes nobody finished, so abandoned attempts don't stay in memory.</summary>
+    private static void PruneExpiredLinks()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var (userId, link) in Pending)
+        {
+            if (now > link.ExpiresAt)
+            {
+                Pending.TryRemove(new KeyValuePair<Guid, PendingLink>(userId, link));
+            }
+        }
+    }
 
     /// <summary>Rejected by Discord, or issued to a different Discord application than the configured one.</summary>
     private bool NeedsRelink(LinkedAccount account)

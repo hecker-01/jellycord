@@ -1,6 +1,5 @@
 using Jellyfin.Plugin.Jellycord.Discord;
 using Jellyfin.Plugin.Jellycord.Presence;
-using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
@@ -33,7 +32,6 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
     private readonly IPresenceSink _sink;
     private readonly ArtworkResolver? _artwork;
     private readonly PrivacyFilter? _privacy;
-    private readonly IServerApplicationHost? _host;
     private readonly CredentialStore? _store;
     private readonly ILogger<PlaybackTracker> _logger;
     private readonly TimeProvider _time;
@@ -48,13 +46,11 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
         IPresenceSink sink,
         ArtworkResolver artwork,
         PrivacyFilter privacy,
-        IServerApplicationHost host,
         CredentialStore store,
         ILogger<PlaybackTracker> logger)
         : this(sessionManager, sink, artwork, logger, TimeProvider.System)
     {
         _privacy = privacy;
-        _host = host;
         _store = store;
     }
 
@@ -68,8 +64,6 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
     }
 
     private long NowMs => _time.GetUtcNow().ToUnixTimeMilliseconds();
-
-    private string ServerName => string.IsNullOrWhiteSpace(_host?.FriendlyName) ? "Jellyfin" : _host.FriendlyName;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -400,7 +394,7 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
 
                 var desired = best is null
                     ? null
-                    : PresenceMapper.Map(best.Media, best.PositionTicks, best.Paused, best.ReportedAtMs, cfg, artwork, ServerName);
+                    : PresenceMapper.Map(best.Media, best.PositionTicks, best.Paused, best.ReportedAtMs, cfg, artwork);
 
                 var action = PresenceDecision.Decide(
                     user.LastSent,

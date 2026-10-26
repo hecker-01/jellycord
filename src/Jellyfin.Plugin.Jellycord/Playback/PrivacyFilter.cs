@@ -9,7 +9,7 @@ namespace Jellyfin.Plugin.Jellycord.Playback;
 
 /// <summary>
 /// Decides whether an item is "private" (e.g. NSFW): such items only show
-/// "Watching {server name}", with no title, artwork or progress.
+/// "Watching Jellyfin", with no title, artwork or progress.
 /// </summary>
 public sealed class PrivacyFilter
 {

@@ -8,7 +8,12 @@ public static class PresenceMapper
 {
     private const int MaxText = 128;
     private const string PausedSuffix = " · Paused";
-    private const string AssetBase = "https://raw.githubusercontent.com/hecker-01/jellycord/main/assets/";
+
+    /// <summary>All a private item shows: "Watching Jellyfin".</summary>
+    public const string PrivateName = "Jellyfin";
+    // Pinned to a commit: Discord fetches these for every status, so they must not change (or vanish)
+    // with whatever is on main. Bump the commit when the icons change.
+    private const string AssetBase = "https://raw.githubusercontent.com/hecker-01/jellycord/6bcb8ea0b2a91adffd45d4ea73c5e6fabb0b4c53/assets/";
 
     public const string LogoUrl = AssetBase + "logo.png";
     public const string PlayingIconUrl = AssetBase + "playing.png";
@@ -16,15 +21,13 @@ public static class PresenceMapper
 
     /// <summary>Returns null when this item shouldn't be shown at all.</summary>
     /// <param name="artworkUrl">A public poster found by <see cref="ArtworkResolver"/>, if any.</param>
-    /// <param name="serverName">Shown instead of the title for private items.</param>
     public static PresenceActivity? Map(
         MediaSnapshot media,
         long positionTicks,
         bool paused,
         long nowMs,
         PluginConfiguration cfg,
-        string? artworkUrl = null,
-        string serverName = "Jellyfin")
+        string? artworkUrl = null)
     {
         if (paused && !cfg.ShowWhenPaused)
         {
@@ -52,9 +55,10 @@ public static class PresenceMapper
             return new PresenceActivity
             {
                 Type = PresenceActivity.Watching,
-                Name = Fit(string.IsNullOrWhiteSpace(serverName) ? "Jellyfin" : serverName)!,
+                // not even the server's name: "Watching Jellyfin" says nothing about which server or what
+                Name = PrivateName,
                 LargeImage = logo,
-                LargeText = logo is null ? null : Fit(serverName),
+                LargeText = logo is null ? null : PrivateName,
             };
         }
 

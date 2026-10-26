@@ -28,7 +28,7 @@ public readonly record struct TokenSet(string AccessToken, string? RefreshToken,
 /// <summary>Per-user privacy choices. They only ever add to the admin's rules.</summary>
 public sealed class UserSettings
 {
-    /// <summary>Never show what I'm playing, only "Watching {server}".</summary>
+    /// <summary>Never show what I'm playing, only "Watching Jellyfin".</summary>
     public bool AlwaysPrivate { get; set; }
 
     public string[] PrivateLibraryIds { get; set; } = [];

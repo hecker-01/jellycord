@@ -30,7 +30,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public bool UploadArtwork { get; set; }
 
-    /// <summary>Libraries whose items are private: only "Watching {server}" is shown.</summary>
+    /// <summary>Libraries whose items are private: only "Watching Jellyfin" is shown.</summary>
     public string[] PrivateLibraryIds { get; set; } = [];
 
     /// <summary>Comma-separated tags that make an item private (also inherited from series/albums).</summary>
