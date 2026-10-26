@@ -7,7 +7,13 @@ namespace Jellyfin.Plugin.Jellycord.Presence;
 public static class PresenceMapper
 {
     private const int MaxText = 128;
-    private const string AssetBase = "https://raw.githubusercontent.com/hecker-01/jellycord/main/assets/";
+    private const string PausedSuffix = " · Paused";
+
+    /// <summary>All a private item shows: "Watching Jellyfin".</summary>
+    public const string PrivateName = "Jellyfin";
+    // Pinned to a commit: Discord fetches these for every status, so they must not change (or vanish)
+    // with whatever is on main. Bump the commit when the icons change.
+    private const string AssetBase = "https://raw.githubusercontent.com/hecker-01/jellycord/6bcb8ea0b2a91adffd45d4ea73c5e6fabb0b4c53/assets/";
 
     public const string LogoUrl = AssetBase + "logo.png";
     public const string PlayingIconUrl = AssetBase + "playing.png";
@@ -15,31 +21,44 @@ public static class PresenceMapper
 
     /// <summary>Returns null when this item shouldn't be shown at all.</summary>
     /// <param name="artworkUrl">A public poster found by <see cref="ArtworkResolver"/>, if any.</param>
-    /// <param name="serverName">Shown instead of the title for private items.</param>
     public static PresenceActivity? Map(
         MediaSnapshot media,
         long positionTicks,
         bool paused,
         long nowMs,
         PluginConfiguration cfg,
-        string? artworkUrl = null,
-        string serverName = "Jellyfin")
+        string? artworkUrl = null)
     {
         if (paused && !cfg.ShowWhenPaused)
         {
             return null;
         }
 
+        // the per-kind toggles apply to private items too
+        var kindEnabled = media.Kind switch
+        {
+            MediaKind.Episode => cfg.ShowEpisodes,
+            MediaKind.Movie => cfg.ShowMovies,
+            MediaKind.Music => cfg.ShowMusic,
+            _ => false,
+        };
+        if (!kindEnabled)
+        {
+            return null;
+        }
+
         if (media.IsPrivate)
         {
-            // nothing about the item itself: no title, poster, progress or pause state
+            // nothing about the item itself: no title, poster, progress, pause state or even
+            // its kind (always Watching, never Listening)
             var logo = ResolveFallback(cfg);
             return new PresenceActivity
             {
-                Type = media.Kind == MediaKind.Music ? PresenceActivity.Listening : PresenceActivity.Watching,
-                Name = Fit(string.IsNullOrWhiteSpace(serverName) ? "Jellyfin" : serverName)!,
+                Type = PresenceActivity.Watching,
+                // not even the server's name: "Watching Jellyfin" says nothing about which server or what
+                Name = PrivateName,
                 LargeImage = logo,
-                LargeText = logo is null ? null : Fit(serverName),
+                LargeText = logo is null ? null : PrivateName,
             };
         }
 
@@ -50,17 +69,17 @@ public static class PresenceMapper
 
         switch (media.Kind)
         {
-            case MediaKind.Episode when cfg.ShowEpisodes:
+            case MediaKind.Episode:
                 name = Coalesce(media.SeriesName, media.Title);
                 details = name;
                 state = EpisodeLine(media);
                 break;
-            case MediaKind.Movie when cfg.ShowMovies:
+            case MediaKind.Movie:
                 name = media.Title;
                 details = media.Title;
                 state = media.Year?.ToString(CultureInfo.InvariantCulture);
                 break;
-            case MediaKind.Music when cfg.ShowMusic:
+            case MediaKind.Music:
                 type = PresenceActivity.Listening;
                 name = media.Title;
                 details = media.Title;
@@ -74,14 +93,24 @@ public static class PresenceMapper
 
         if (paused)
         {
-            state = state is null ? "Paused" : $"{state} · Paused";
+            // truncate before appending, so a long episode line can't push "Paused" off the end
+            state = Fit(state, MaxText - PausedSuffix.Length) is { } s ? s + PausedSuffix : "Paused";
         }
 
         long? start = null, end = null;
-        if (!paused && media.RunTimeTicks is > 0)
+        if (!paused)
         {
-            start = nowMs - (positionTicks / TimeSpan.TicksPerMillisecond);
-            end = start + (media.RunTimeTicks.Value / TimeSpan.TicksPerMillisecond);
+            start = nowMs - (Math.Max(0, positionTicks) / TimeSpan.TicksPerMillisecond);
+            if (media.RunTimeTicks is > 0)
+            {
+                end = start + (media.RunTimeTicks.Value / TimeSpan.TicksPerMillisecond);
+            }
+
+            // unknown runtime, or played past it: an elapsed timer rather than no timer or a full bar
+            if (end <= nowMs)
+            {
+                end = null;
+            }
         }
 
         var largeImage = ResolveImage(media, cfg, artworkUrl);
@@ -90,7 +119,8 @@ public static class PresenceMapper
         return new PresenceActivity
         {
             Type = type,
-            Name = Fit(name)!,
+            // Discord rejects an activity without a name
+            Name = Fit(name) ?? "Unknown title",
             Details = Fit(details),
             State = Fit(state),
             StartMs = start,
@@ -149,10 +179,12 @@ public static class PresenceMapper
         // it is visible to anyone looking at the profile.
         if (Uri.TryCreate(cfg.PublicUrl?.Trim(), UriKind.Absolute, out var baseUri)
             && baseUri.Scheme == Uri.UriSchemeHttps
-            && !baseUri.IsLoopback)
+            && ArtworkResolver.IsPublicHost(baseUri))
         {
+            // scheme, host, port and path only: never user-info, a query or a fragment from the setting
+            var root = baseUri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped);
             var id = media.ImageItemId == Guid.Empty ? media.ItemId : media.ImageItemId;
-            var url = $"{baseUri.AbsoluteUri.TrimEnd('/')}/Items/{id:N}/Images/Primary?fillHeight=512&quality=90";
+            var url = $"{root.TrimEnd('/')}/Items/{id:N}/Images/Primary?fillHeight=512&quality=90";
             if (url.Length <= 300)
             {
                 return url;
@@ -164,18 +196,33 @@ public static class PresenceMapper
 
     private static string Coalesce(string? a, string b) => string.IsNullOrWhiteSpace(a) ? b : a;
 
-    /// <summary>Discord wants 2..128 chars.</summary>
-    internal static string? Fit(string? s)
+    /// <summary>Discord wants 2..128 chars on one line.</summary>
+    internal static string? Fit(string? s, int max = MaxText)
     {
         if (string.IsNullOrWhiteSpace(s))
         {
             return null;
         }
 
-        s = s.Trim();
-        if (s.Length > MaxText)
+        // newlines, tabs and other control characters become spaces
+        s = string.Create(s.Length, s, static (span, src) =>
         {
-            s = string.Concat(s.AsSpan(0, MaxText - 1), "…");
+            for (var i = 0; i < src.Length; i++)
+            {
+                span[i] = char.IsControl(src[i]) ? ' ' : src[i];
+            }
+        }).Trim();
+
+        if (s.Length > max)
+        {
+            // never split a surrogate pair (emoji, rare CJK): a lone half is invalid UTF-16
+            var keep = max - 1;
+            if (char.IsHighSurrogate(s[keep - 1]))
+            {
+                keep--;
+            }
+
+            s = string.Concat(s.AsSpan(0, keep), "…");
         }
 
         return s.Length < 2 ? s.PadRight(2, '⠀') : s;

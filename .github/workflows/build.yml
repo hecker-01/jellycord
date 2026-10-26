@@ -4,21 +4,33 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      # actions are pinned to commit SHAs (tags can be moved); Dependabot keeps them current
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test Jellycord.sln -c Release
-      - run: dotnet publish src/Jellyfin.Plugin.Jellycord -c Release -o out
-      - uses: actions/upload-artifact@v4
+      - run: dotnet restore Jellycord.sln --locked-mode
+      - name: Check for vulnerable packages
+        run: |
+          dotnet list Jellycord.sln package --vulnerable --include-transitive | tee vulnerable.txt
+          ! grep -q "has the following vulnerable packages" vulnerable.txt
+      - run: dotnet test Jellycord.sln -c Release --no-restore
+      - run: dotnet publish src/Jellyfin.Plugin.Jellycord -c Release -o out --no-restore
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: jellycord-dll
           path: out/Jellyfin.Plugin.Jellycord.dll

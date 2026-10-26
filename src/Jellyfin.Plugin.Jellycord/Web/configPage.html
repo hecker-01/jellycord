@@ -30,6 +30,7 @@
                         <label class="inputLabel inputLabelUnfocused" for="ClientSecret">Client secret (optional)</label>
                         <input id="ClientSecret" type="password" is="emby-input" autocomplete="new-password" />
                         <div class="fieldDescription" id="ClientSecretState">Only needed if Public Client is off. Never shown again once saved.</div>
+                        <button is="emby-button" type="button" id="ClearSecret" class="raised emby-button" hidden><span>Clear saved secret</span></button>
                     </div>
                 </div>
 
@@ -55,7 +56,7 @@
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowEpisodes" /><span>Show TV episodes</span></label>
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowMusic" /><span>Show music (as "Listening to")</span></label>
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowWhenPaused" /><span>Keep status while paused</span></label>
-                    <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="InjectWebUi" /><span>Add "Discord status" to the user menu and Settings page (needs the File Transformation plugin; restart after changing)</span></label>
+                    <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="InjectWebUi" /><span>Add "Discord status" to the user menu and Settings page (needs the File Transformation plugin; reload jellyfin-web in the browser after changing)</span></label>
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowStatusIcon" /><span>Show a small playing/paused badge on the artwork</span></label>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="ClearDelaySeconds">Clear delay after stop (seconds)</label>
@@ -65,9 +66,11 @@
 
                 <div class="verticalSection">
                     <h3 class="sectionTitle">4. Private content</h3>
-                    <p class="fieldDescription">Anything matching these rules only shows <b>"Watching <span class="jcServerName">your server</span>"</b>: no title, poster or progress. Users can add their own rules on the link page, but can't remove these.</p>
-                    <div class="fieldDescription" style="margin:1em 0 .5em">Private libraries</div>
-                    <div id="PrivateLibraries"><span class="fieldDescription">Loading…</span></div>
+                    <p class="fieldDescription">Anything matching these rules only shows <b>"Watching Jellyfin"</b>: no title, poster or progress. Users can add their own rules on the link page, but can't remove these.</p>
+                    <fieldset style="border:0;padding:0;margin:0;min-width:0">
+                        <legend class="fieldDescription" style="margin:1em 0 .5em;padding:0">Private libraries</legend>
+                        <div id="PrivateLibraries"><span class="fieldDescription">Loading…</span></div>
+                    </fieldset>
                     <div class="inputContainer" style="margin-top:1.5em">
                         <label class="inputLabel inputLabelUnfocused" for="PrivateTags">Private tags</label>
                         <input id="PrivateTags" name="PrivateTags" type="text" is="emby-input" />
@@ -89,7 +92,7 @@
                 <h3 class="sectionTitle">5. Link users</h3>
                 <p>Share this page with your users. They open it while signed in to Jellyfin and link their own Discord:</p>
                 <p><a id="LinkPageUrl" is="emby-linkbutton" class="button-link" target="_blank"></a></p>
-                <div id="Accounts"></div>
+                <div id="Accounts" aria-live="polite"></div>
             </div>
         </div>
     </div>
@@ -101,21 +104,43 @@
             var bools = ['ShowMovies', 'ShowEpisodes', 'ShowMusic', 'ShowWhenPaused', 'ShowStatusIcon', 'UploadArtwork', 'InjectWebUi'];
             var texts = ['ClientId', 'PublicUrl', 'FallbackImage', 'PrivateTags', 'PrivateRatings'];
 
+            // Save only rewrites PrivateLibraryIds once the checkboxes have rendered; otherwise an
+            // empty or failed list would silently make every private library public.
+            var librariesLoaded = false;
+            // likewise the whole form: saving it before the settings loaded would write blanks
+            var configLoaded = false;
+
+            function norm(id) { return String(id || '').replace(/-/g, '').toLowerCase(); }
+
             function renderLibraries(selected) {
+                var el = page.querySelector('#PrivateLibraries');
+                var mine = selected.map(norm);
+                librariesLoaded = false;
                 ApiClient.getVirtualFolders().then(function (folders) {
-                    var el = page.querySelector('#PrivateLibraries');
                     if (!folders.length) { el.innerHTML = '<span class="fieldDescription">No libraries.</span>'; return; }
                     el.innerHTML = folders.map(function (f) {
                         return '<label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" data-lib="' + esc(f.ItemId) + '"' +
-                            (selected.indexOf(f.ItemId) >= 0 ? ' checked' : '') + ' /><span>' + esc(f.Name) + '</span></label>';
+                            (mine.indexOf(norm(f.ItemId)) >= 0 ? ' checked' : '') + ' /><span>' + esc(f.Name) + '</span></label>';
                     }).join('');
+                    librariesLoaded = true;
+                }, function () {
+                    el.innerHTML = '<span class="fieldDescription">Could not load libraries. Saving keeps the current private libraries; reload to change them.</span>';
                 });
             }
 
             function esc(s) {
-                var d = document.createElement('div');
-                d.textContent = s == null ? '' : String(s);
-                return d.innerHTML;
+                return String(s == null ? '' : s)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            }
+
+            function loadSecretState() {
+                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('Jellycord/ClientSecret'), dataType: 'json' }).then(function (s) {
+                    page.querySelector('#ClientSecretState').textContent = s.isSet
+                        ? 'A secret is saved. Enter a new value to replace it.'
+                        : 'Only needed if Public Client is off. Never shown again once saved.';
+                    page.querySelector('#ClearSecret').hidden = !s.isSet;
+                }, function () { });
             }
 
             function loadAccounts() {
@@ -134,57 +159,85 @@
                         }).join('') + '</table>';
                     el.querySelectorAll('[data-unlink]').forEach(function (b) {
                         b.addEventListener('click', function () {
+                            var name = b.closest('tr').querySelector('td').textContent;
+                            if (!window.confirm('Unlink Discord for ' + name + '? Their status stops updating until they link again.')) { return; }
+                            b.disabled = true;
                             ApiClient.ajax({ type: 'POST', url: ApiClient.getUrl('Jellycord/Accounts/' + b.getAttribute('data-unlink') + '/Unlink') })
-                                .then(loadAccounts, loadAccounts);
+                                .then(loadAccounts, function () {
+                                    Dashboard.alert('Unlinking failed. Check the Jellyfin log and try again.');
+                                    loadAccounts();
+                                });
                         });
                     });
+                }, function () {
+                    page.querySelector('#Accounts').innerHTML = '<p class="fieldDescription">Could not load linked users.</p>';
                 });
             }
 
             page.addEventListener('pageshow', function () {
                 Dashboard.showLoadingMsg();
+                configLoaded = false;
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     texts.forEach(function (k) { page.querySelector('#' + k).value = config[k] || ''; });
                     bools.forEach(function (k) { page.querySelector('#' + k).checked = !!config[k]; });
                     page.querySelector('#ClearDelaySeconds').value = config.ClearDelaySeconds;
                     renderLibraries(config.PrivateLibraryIds || []);
+                    configLoaded = true;
                     Dashboard.hideLoadingMsg();
+                }, function () {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert('Could not load the Jellycord settings. Reload the page before saving.');
                 });
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('Jellycord/ClientSecret'), dataType: 'json' }).then(function (s) {
-                    page.querySelector('#ClientSecretState').textContent = s.isSet
-                        ? 'A secret is saved. Enter a new value to replace it, or a single space to clear it.'
-                        : 'Only needed if Public Client is off. Never shown again once saved.';
-                });
+                loadSecretState();
                 var url = ApiClient.getUrl('Jellycord/Link');
                 var a = page.querySelector('#LinkPageUrl');
                 a.href = url;
                 a.textContent = url;
                 loadAccounts();
-                ApiClient.getSystemInfo().then(function (info) {
-                    page.querySelectorAll('.jcServerName').forEach(function (s) { s.textContent = info.ServerName; });
+            });
+
+            function postSecret(value) {
+                return ApiClient.ajax({
+                    type: 'POST', url: ApiClient.getUrl('Jellycord/ClientSecret'),
+                    data: JSON.stringify({ Value: value }), contentType: 'application/json'
                 });
+            }
+
+            page.querySelector('#ClearSecret').addEventListener('click', function () {
+                if (!window.confirm('Clear the saved client secret? Linking then needs Public Client turned on in the Discord app.')) { return; }
+                postSecret('').then(loadSecretState, function () { Dashboard.alert('Clearing the secret failed.'); });
             });
 
             page.querySelector('#JellycordConfigForm').addEventListener('submit', function (e) {
                 e.preventDefault();
+                if (!configLoaded) {
+                    Dashboard.alert('The settings have not loaded yet. Reload the page before saving.');
+                    return false;
+                }
+
                 Dashboard.showLoadingMsg();
-                var secret = page.querySelector('#ClientSecret').value;
-                var saveSecret = secret === ''
-                    ? Promise.resolve()
-                    : ApiClient.ajax({
-                        type: 'POST', url: ApiClient.getUrl('Jellycord/ClientSecret'),
-                        data: JSON.stringify({ Value: secret }), contentType: 'application/json'
-                    });
+                var secret = page.querySelector('#ClientSecret').value.trim();
+                var result;
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     texts.forEach(function (k) { config[k] = page.querySelector('#' + k).value.trim(); });
                     bools.forEach(function (k) { config[k] = page.querySelector('#' + k).checked; });
                     config.ClearDelaySeconds = parseInt(page.querySelector('#ClearDelaySeconds').value, 10) || 0;
-                    config.PrivateLibraryIds = Array.prototype.map.call(
-                        page.querySelectorAll('[data-lib]:checked'), function (c) { return c.getAttribute('data-lib'); });
-                    return Promise.all([ApiClient.updatePluginConfiguration(pluginId, config), saveSecret]);
+                    if (librariesLoaded) {
+                        config.PrivateLibraryIds = Array.prototype.map.call(
+                            page.querySelectorAll('[data-lib]:checked'), function (c) { return c.getAttribute('data-lib'); });
+                    }
+                    return ApiClient.updatePluginConfiguration(pluginId, config);
                 }).then(function (r) {
+                    // the secret only after the settings, so a failure can't leave half of it saved
+                    result = r;
+                    return secret === '' ? null : postSecret(secret);
+                }).then(function () {
                     page.querySelector('#ClientSecret').value = '';
-                    Dashboard.processPluginConfigurationUpdateResult(r[0]);
+                    loadSecretState();
+                    Dashboard.processPluginConfigurationUpdateResult(result);
+                }, function () {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert('Saving failed. Check the Jellyfin log, reload the page and try again.');
                 });
                 return false;
             });

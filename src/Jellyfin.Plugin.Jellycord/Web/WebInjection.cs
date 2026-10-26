@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -22,21 +23,28 @@ public sealed class WebInjection : IHostedService
         _logger = logger;
     }
 
+    private const int Attempts = 6;
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
         // File Transformation finishes its own startup around the same time; retry briefly
         _ = Task.Run(
             async () =>
             {
-                for (var attempt = 0; attempt < 6; attempt++)
+                Exception? last = null;
+                for (var attempt = 0; attempt < Attempts; attempt++)
                 {
-                    if (TryRegister())
+                    if (TryRegister(out last))
                     {
                         return;
                     }
 
                     await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
                 }
+
+                _logger.LogWarning(
+                    last,
+                    "Could not register with the File Transformation plugin; \"Discord status\" won't appear in jellyfin-web. Users can still link at /Jellycord/Link");
             },
             cancellationToken);
         return Task.CompletedTask;
@@ -44,8 +52,9 @@ public sealed class WebInjection : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    private bool TryRegister()
+    private bool TryRegister(out Exception? error)
     {
+        error = null;
         var assembly = AssemblyLoadContext.All
             .SelectMany(c => c.Assemblies)
             .FirstOrDefault(a => a.GetName().Name == "Jellyfin.Plugin.FileTransformation");
@@ -81,7 +90,9 @@ public sealed class WebInjection : IHostedService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "File Transformation not ready yet");
+            // reflection wraps whatever File Transformation threw
+            error = ex is TargetInvocationException { InnerException: { } inner } ? inner : ex;
+            _logger.LogDebug(error, "File Transformation not ready yet");
             return false;
         }
     }
@@ -98,6 +109,13 @@ public static class IndexHtmlTransform
 {
     private const string Marker = "Jellycord/web.js";
 
+    /// <summary>Hash of the embedded script: a rebuilt web.js gets a new URL even without a version bump.</summary>
+    private static readonly Lazy<string> ScriptHash = new(() =>
+    {
+        using var stream = typeof(IndexHtmlTransform).Assembly.GetManifestResourceStream("Jellyfin.Plugin.Jellycord.Web.web.js");
+        return stream is null ? "0" : Convert.ToHexStringLower(SHA256.HashData(stream))[..12];
+    });
+
     public static string Transform(TransformPayload payload)
     {
         var html = payload.Contents ?? string.Empty;
@@ -106,8 +124,7 @@ public static class IndexHtmlTransform
             return html;
         }
 
-        var version = typeof(IndexHtmlTransform).Assembly.GetName().Version?.ToString() ?? "0";
-        var tag = $"<script defer src=\"../{Marker}?v={version}\"></script>";
+        var tag = $"<script defer src=\"../{Marker}?v={ScriptHash.Value}\"></script>";
         var at = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
         return at < 0 ? html + tag : html.Insert(at, tag);
     }

@@ -4,7 +4,7 @@
 
 A Jellyfin plugin that shows what you're watching as your **Discord status**: "Watching Breaking Bad · S5E14 · Ozymandias", with the poster and a live progress bar. It works for every user on the server who links their Discord, on any device (TV, phone, browser). Nobody needs the Discord desktop app running.
 
-> **Status: early (v0.1, Jellyfin 12.x).** Built against Jellyfin 12.0 / .NET 10, and loads and tracks playback on 12.2. The Discord headless-sessions flow (link, set, pause, delete) was checked against a real Discord app in October 2026. It's an undocumented endpoint, so please report what works and what doesn't.
+> **Status: early (v0.2, Jellyfin 12.x).** Built against Jellyfin 12.0 / .NET 10, and loads and tracks playback on 12.2. The Discord headless-sessions flow (link, set, pause, delete) was checked against a real Discord app in October 2026. It's an undocumented endpoint, so please report what works and what doesn't.
 
 ## Why not a bot token?
 
@@ -38,7 +38,7 @@ Manual install: download the zip from [Releases](https://github.com/hecker-01/je
 Dashboard → Plugins → **Jellycord**:
 
 - **Application ID**: from step 1.
-- **Public server URL** (optional): set this only if your server is reachable from the internet over HTTPS (`https://jellyfin.example.com`). Discord then loads posters straight from it. Image URLs never include an API key. Leave it empty for LAN, Tailscale or VPN-only servers (see [Posters on private servers](#posters-on-private-servers)).
+- **Public server URL** (optional): set this only if your server is reachable from the internet over HTTPS (`https://jellyfin.example.com`). Discord then loads posters straight from it. Image URLs never include an API key, but they do show your server's hostname to anyone who looks at the poster. Leave it empty for LAN, Tailscale or VPN-only servers (see [Posters on private servers](#posters-on-private-servers)).
 - **Upload posters as a last resort** (optional, off): see below.
 - **Fallback image** (optional): shown when there's no poster. Leave it empty for the Jellycord logo, or use an https image URL, an art asset key from your Discord app, or `none`.
 - **Status badge**: a small playing/paused icon on the corner of the artwork (on by default).
@@ -71,12 +71,12 @@ Theme songs, trailers and other extras are ignored. If a user plays on several d
 
 ### Private content (NSFW)
 
-Some things shouldn't end up on your Discord profile. A private item only shows **"Watching *Your Server Name*"**, with the Jellycord logo: no title, poster, progress bar or pause state, and no poster lookup or upload happens for it.
+Some things shouldn't end up on your Discord profile. A private item only shows **"Watching Jellyfin"**, with the Jellycord logo: no title, poster, progress bar or pause state, and no poster lookup or upload happens for it.
 
 An item is private if any of these match:
 
 - **Admin rules** (plugin settings, apply to everyone): private libraries, tags (default `nsfw, adult, xxx, hentai, porn`, including tags on the series or album) and parental ratings (default `XXX, X, AO, NC-17, R18, R18+, 18+`).
-- **User rules** (each user's link page): users can mark extra libraries or tags private for themselves, or turn on **Keep everything private** to only ever show the server name. Users can add rules but can't remove the admin's.
+- **User rules** (each user's link page): users can mark extra libraries or tags private for themselves, or turn on **Keep everything private** to only ever show "Watching Jellyfin". Users can add rules but can't remove the admin's.
 
 `GET /Jellycord/Preview/{itemId}` reports `isPrivate` under the admin rules.
 
@@ -95,8 +95,9 @@ Avoid exposing the whole server with Tailscale Funnel just for posters. Option 1
 ## Privacy and caveats
 
 - **The Discord permission is broader than presence.** Discord has no presence-only scope; `sdk.social_layer_presence` also grants access to the user's friends list. Jellycord only sets the status. The link page tells users this, and they can revoke access any time under *Discord → Settings → Authorized Apps*.
-- Tokens are stored in `<jellyfin data>/plugins/configurations/Jellyfin.Plugin.Jellycord.credentials.json` (owner-only on Linux), outside the plugin configuration, so they're never sent to a browser.
+- Tokens are stored in `<jellyfin data>/plugins/configurations/Jellyfin.Plugin.Jellycord.credentials.json` (owner-only on Linux and macOS; on Windows it inherits the folder's permissions), outside the plugin configuration, so they're never sent to a browser.
 - `headless-sessions` is not in Discord's public docs. Discord could change or gate it. Jellycord delivers presence through a swappable "sink", so a desktop-companion (local RPC) fallback can be added without a rewrite.
+- **Discord's terms still apply.** Your Discord application is bound by Discord's Developer Terms of Service and Developer Policy, and using an undocumented endpoint is at your own risk. Jellycord keeps to Discord's rate limits (at most one update every 6 seconds per user, and it honours `retry_after`), but Discord can still limit or revoke an application.
 - Only approve link codes you generated yourself.
 
 ## Development
@@ -107,11 +108,13 @@ Requires the .NET 10 SDK.
 dotnet test
 ```
 
+Dependencies are pinned in `packages.lock.json`. After changing a package reference, run `dotnet restore` and commit the updated lock files. Release builds treat warnings as errors.
+
 ```bash
 dotnet publish src/Jellyfin.Plugin.Jellycord -c Release -o out
 ```
 
-To check the Discord API against your own app before installing the plugin, run the spike:
+To check the Discord API against your own app before installing the plugin, run the spike (it's not part of the solution or CI):
 
 ```bash
 dotnet run --project spike/HeadlessSpike -- --client-id <your application id>
@@ -135,7 +138,12 @@ docs/                  research report and notes
 
 ### Releasing
 
-Push a tag like `v0.1.0`. The release workflow builds the zip, creates a GitHub release, and adds the version to `manifest.json`.
+1. Bump `<Version>`, `<AssemblyVersion>` and `<FileVersion>` in `Directory.Build.props` (e.g. `0.2.0.0`) and merge that to `main`.
+2. Push a matching tag from `main`, e.g. `v0.2.0`.
+
+The release workflow refuses a tag that isn't `vX.Y.Z`, doesn't match `Directory.Build.props`, or isn't on `main`. It builds and tests the plugin, creates the GitHub release with the zip, and adds the version to `manifest.json` with the release notes as its changelog and `targetAbi` taken from `build.yaml`. If a run fails partway, re-running it is safe.
+
+The status icons Discord shows are loaded from a pinned commit (`AssetBase` in `PresenceMapper.cs`). If you change them, commit the new icons first, then point `AssetBase` at that commit.
 
 ## Roadmap
 
@@ -149,4 +157,4 @@ The headless-sessions flow follows [mrzeappleGit/jellyfin-plugin-discord-presenc
 
 ## License
 
-MIT
+[GNU General Public License v3.0](LICENSE)

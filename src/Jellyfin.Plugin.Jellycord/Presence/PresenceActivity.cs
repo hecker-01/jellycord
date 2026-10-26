@@ -18,7 +18,7 @@ public sealed record PresenceActivity
 
     public string? State { get; init; }
 
-    /// <summary>Unix ms. Start and end together give Discord's progress bar.</summary>
+    /// <summary>Unix ms. Start and end together give Discord's progress bar; start alone an elapsed timer.</summary>
     public long? StartMs { get; init; }
 
     public long? EndMs { get; init; }
@@ -54,13 +54,15 @@ public sealed record PresenceActivity
             o["state"] = State;
         }
 
-        if (StartMs is not null && EndMs is not null)
+        if (StartMs is not null)
         {
-            o["timestamps"] = new JsonObject
+            var timestamps = new JsonObject { ["start"] = StartMs.Value.ToString(CultureInfo.InvariantCulture) };
+            if (EndMs is not null)
             {
-                ["start"] = StartMs.Value.ToString(CultureInfo.InvariantCulture),
-                ["end"] = EndMs.Value.ToString(CultureInfo.InvariantCulture),
-            };
+                timestamps["end"] = EndMs.Value.ToString(CultureInfo.InvariantCulture);
+            }
+
+            o["timestamps"] = timestamps;
         }
 
         if (LargeImage is not null)

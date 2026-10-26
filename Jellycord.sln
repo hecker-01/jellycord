@@ -11,9 +11,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Jellyfin.Plugin.Jellycord.Tests", "tests\Jellyfin.Plugin.Jellycord.Tests\Jellyfin.Plugin.Jellycord.Tests.csproj", "{13BD7C70-494F-47B3-8AF2-3A942F39A800}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "spike", "spike", "{D6EA9C13-5DDC-B6DF-E3F6-EC65D4C25D12}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HeadlessSpike", "spike\HeadlessSpike\HeadlessSpike.csproj", "{E1264DD4-1334-478B-A3DE-92FD812253AF}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -49,18 +46,6 @@ Global
 		{13BD7C70-494F-47B3-8AF2-3A942F39A800}.Release|x64.Build.0 = Release|Any CPU
 		{13BD7C70-494F-47B3-8AF2-3A942F39A800}.Release|x86.ActiveCfg = Release|Any CPU
 		{13BD7C70-494F-47B3-8AF2-3A942F39A800}.Release|x86.Build.0 = Release|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Debug|x64.Build.0 = Debug|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Debug|x86.Build.0 = Debug|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Release|Any CPU.Build.0 = Release|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Release|x64.ActiveCfg = Release|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Release|x64.Build.0 = Release|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Release|x86.ActiveCfg = Release|Any CPU
-		{E1264DD4-1334-478B-A3DE-92FD812253AF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -68,6 +53,5 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{03946D5B-4581-477B-8B91-BE9A3C960AEB} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{13BD7C70-494F-47B3-8AF2-3A942F39A800} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
-		{E1264DD4-1334-478B-A3DE-92FD812253AF} = {D6EA9C13-5DDC-B6DF-E3F6-EC65D4C25D12}
 	EndGlobalSection
 EndGlobal

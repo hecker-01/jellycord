@@ -18,12 +18,13 @@ public class PrivacyTests
     };
 
     [Fact]
-    public void PrivateItem_ShowsOnlyServerName()
+    public void PrivateItem_ShowsOnlyWatchingJellyfin()
     {
-        var a = PresenceMapper.Map(Private(), TimeSpan.FromMinutes(5).Ticks, false, 1_000_000, new PluginConfiguration(), "https://image.tmdb.org/t/p/w500/x.jpg", "heckrAni")!;
+        var a = PresenceMapper.Map(Private(), TimeSpan.FromMinutes(5).Ticks, false, 1_000_000, new PluginConfiguration(), "https://image.tmdb.org/t/p/w500/x.jpg")!;
 
         Assert.Equal(PresenceActivity.Watching, a.Type);
-        Assert.Equal("heckrAni", a.Name);
+        Assert.Equal("Jellyfin", a.Name);
+        Assert.Equal("Jellyfin", a.LargeText);
         Assert.Null(a.Details);
         Assert.Null(a.State);
         Assert.Null(a.StartMs);
@@ -37,20 +38,30 @@ public class PrivacyTests
     public void PrivateItem_IgnoresPublicPosterUrl()
     {
         var cfg = new PluginConfiguration { PublicUrl = "https://jf.example.com" };
-        var a = PresenceMapper.Map(Private(), 0, false, 0, cfg, null, "heckrAni")!;
+        var a = PresenceMapper.Map(Private(), 0, false, 0, cfg, null)!;
         Assert.Equal(PresenceMapper.LogoUrl, a.LargeImage);
     }
 
     [Fact]
     public void PrivateItem_PausedLooksTheSame()
     {
-        var a = PresenceMapper.Map(Private(), 0, true, 0, new PluginConfiguration(), null, "heckrAni")!;
+        var a = PresenceMapper.Map(Private(), 0, true, 0, new PluginConfiguration(), null)!;
         Assert.Null(a.State);
     }
 
     [Fact]
-    public void PrivateMusic_IsListening()
-        => Assert.Equal(PresenceActivity.Listening, PresenceMapper.Map(Private(MediaKind.Music), 0, false, 0, new PluginConfiguration(), null, "x")!.Type);
+    public void PrivateMusic_DoesNotRevealItsKind()
+        => Assert.Equal(PresenceActivity.Watching, PresenceMapper.Map(Private(MediaKind.Music), 0, false, 0, new PluginConfiguration(), null)!.Type);
+
+    [Theory]
+    [InlineData(MediaKind.Music)]
+    [InlineData(MediaKind.Movie)]
+    [InlineData(MediaKind.Episode)]
+    public void PrivateItem_RespectsKindToggle(MediaKind kind)
+    {
+        var cfg = new PluginConfiguration { ShowMusic = false, ShowMovies = false, ShowEpisodes = false };
+        Assert.Null(PresenceMapper.Map(Private(kind), 0, false, 0, cfg, null));
+    }
 
     [Theory]
     [InlineData("XXX", "XXX")]

@@ -19,7 +19,18 @@ namespace Jellyfin.Plugin.Jellycord.Api;
 [Authorize]
 public class JellycordController : ControllerBase
 {
+    internal const int MaxPrivateTagsLength = 1000;
+
+    /// <summary>
+    /// Budget for work that must finish once Discord has handed out tokens (saving a link, revoking
+    /// on unlink). It replaces the request token so a closed browser tab can't abandon it halfway.
+    /// </summary>
+    private static readonly TimeSpan CommitTimeout = TimeSpan.FromSeconds(60);
+
     private static readonly ConcurrentDictionary<Guid, PendingLink> Pending = new();
+
+    // one StartLink per user at a time, so a double click can't mint two device codes
+    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> StartGates = new();
 
     private readonly DiscordClient _discord;
     private readonly HeadlessSessionSink _sink;
@@ -64,7 +75,16 @@ public class JellycordController : ControllerBase
     public ActionResult GetLinkPage()
     {
         var stream = typeof(Plugin).Assembly.GetManifestResourceStream("Jellyfin.Plugin.Jellycord.Web.linkPage.html");
-        return stream is null ? NotFound() : File(stream, "text/html; charset=utf-8");
+        if (stream is null)
+        {
+            return NotFound();
+        }
+
+        // it signs in with the browser's Jellyfin token, so no other site may frame it (clickjacking)
+        Response.Headers.XFrameOptions = "DENY";
+        Response.Headers.ContentSecurityPolicy = "frame-ancestors 'none'";
+        Response.Headers.XContentTypeOptions = "nosniff";
+        return File(stream, "text/html; charset=utf-8");
     }
 
     /// <summary>Script File Transformation injects into jellyfin-web (user menu entry + native page).</summary>
@@ -78,7 +98,9 @@ public class JellycordController : ControllerBase
             return NotFound();
         }
 
+        // index.html requests this with ?v=<content hash>, so a changed script is fetched right away
         Response.Headers.CacheControl = "public, max-age=3600";
+        Response.Headers.XContentTypeOptions = "nosniff";
         return File(stream, "application/javascript; charset=utf-8");
     }
 
@@ -95,7 +117,7 @@ public class JellycordController : ControllerBase
         {
             configured = !string.IsNullOrWhiteSpace(Plugin.Instance?.Configuration.ClientId),
             linked = account is not null,
-            needsRelink = _sink.IsDead(id),
+            needsRelink = account is not null && NeedsRelink(account),
             discordName = account?.DiscordName,
         });
     }
@@ -113,28 +135,53 @@ public class JellycordController : ControllerBase
             return BadRequest(new { error = "The server admin hasn't set up a Discord application yet." });
         }
 
-        // reuse a live code rather than minting new ones on every click
-        if (Pending.TryGetValue(id, out var live) && DateTimeOffset.UtcNow < live.ExpiresAt)
+        PruneExpiredLinks();
+        var gate = StartGates.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            return Ok(live.ToDto());
-        }
+            // reuse a live code rather than minting new ones on every click
+            if (Pending.TryGetValue(id, out var live) && DateTimeOffset.UtcNow < live.ExpiresAt)
+            {
+                return Ok(live.ToDto());
+            }
 
+            return await StartLinkCoreAsync(id, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<ActionResult> StartLinkCoreAsync(Guid id, CancellationToken ct)
+    {
         var res = await _discord.DeviceAuthorizeAsync(ct).ConfigureAwait(false);
-        if (res.Status != 200 || res.Body?["device_code"] is null)
+        var body = res.Body;
+        var deviceCode = body.Str("device_code");
+        var userCode = body.Str("user_code");
+        var verificationUri = body.Str("verification_uri_complete") ?? body.Str("verification_uri");
+        if (res.Status != 200 || deviceCode is null || userCode is null || verificationUri is null)
         {
             _logger.LogWarning("Discord device authorize failed: {Status} {Body}", res.Status, res.Body?.ToJsonString());
             var hint = res.Status == 401 ? " Turn on 'Public Client' in the Discord app's OAuth2 settings, or set the client secret." : string.Empty;
             return StatusCode(502, new { error = $"Discord rejected the link request ({res.Status}).{hint}" });
         }
 
-        var body = res.Body;
+        // the browser opens this link, so only ever hand out a Discord one
+        if (!IsDiscordUrl(verificationUri))
+        {
+            _logger.LogWarning("Discord returned an unexpected verification URL; not using it");
+            return StatusCode(502, new { error = "Discord returned an unexpected link. Try again later." });
+        }
+
         var pending = new PendingLink
         {
-            DeviceCode = body["device_code"]!.GetValue<string>(),
-            UserCode = body["user_code"]!.GetValue<string>(),
-            VerificationUri = body["verification_uri_complete"]?.GetValue<string>() ?? body["verification_uri"]!.GetValue<string>(),
-            IntervalSeconds = body["interval"]?.GetValue<double>() ?? 5,
-            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(body["expires_in"]?.GetValue<double>() ?? 300),
+            DeviceCode = deviceCode,
+            UserCode = userCode,
+            VerificationUri = verificationUri,
+            IntervalSeconds = body.Num("interval") ?? 5,
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(body.Num("expires_in") ?? 300),
         };
         Pending[id] = pending;
         return Ok(pending.ToDto());
@@ -164,7 +211,9 @@ public class JellycordController : ControllerBase
         {
             if (!Pending.ContainsKey(id))
             {
-                return Ok(new { status = "linked", discordName = _store.Find(id)?.DiscordName });
+                // another poll finished this link while we waited: report what it ended in
+                var done = _store.Find(id);
+                return Ok(new { status = done is null ? "failed" : "linked", discordName = done?.DiscordName });
             }
 
             // respect Discord's polling interval
@@ -175,27 +224,25 @@ public class JellycordController : ControllerBase
 
             pending.LastPoll = DateTimeOffset.UtcNow;
             var res = await _discord.DeviceTokenAsync(pending.DeviceCode, ct).ConfigureAwait(false);
-            if (res.Status == 200 && res.Body?["access_token"] is not null)
+            var account = new LinkedAccount { UserId = id };
+            if (res.Status == 200 && DiscordClient.TryApplyTokens(account, res.Body))
             {
-                Pending.TryRemove(id, out _);
-                var account = new LinkedAccount { UserId = id };
-                DiscordClient.ApplyTokens(account, res.Body);
-
-                var me = await _discord.GetMeAsync(account.AccessToken, ct).ConfigureAwait(false);
-                account.DiscordName = me.Body?["global_name"]?.GetValue<string>()
-                    ?? me.Body?["username"]?.GetValue<string>()
-                    ?? "Discord user";
-
-                var replaced = _store.AddOrReplace(account);
-                if (replaced is not null)
+                try
                 {
-                    await _sink.ClearAndForgetAsync(replaced, ct).ConfigureAwait(false);
+                    return await CompleteLinkAsync(account).ConfigureAwait(false);
                 }
+                finally
+                {
+                    // the device code is spent either way
+                    Pending.TryRemove(id, out _);
+                }
+            }
 
-                _sink.Reset(id);
-                _tracker.Invalidate(id);
-                _logger.LogInformation("Linked Jellyfin user {UserId} to Discord {Discord}", id, account.DiscordName);
-                return Ok(new { status = "linked", discordName = account.DiscordName });
+            if (res.Status == 0)
+            {
+                // network trouble reaching Discord: keep the code and let the page poll again
+                _logger.LogDebug("Polling Discord for a link failed: {Error}", res.Body.Str("network_error"));
+                return Ok(new { status = "pending" });
             }
 
             switch (res.Error)
@@ -204,8 +251,6 @@ public class JellycordController : ControllerBase
                     return Ok(new { status = "pending" });
                 case "slow_down":
                     pending.IntervalSeconds += 5;
-                    return Ok(new { status = "pending" });
-                case null when res.Status == 0:
                     return Ok(new { status = "pending" });
                 default:
                     Pending.TryRemove(id, out _);
@@ -245,11 +290,18 @@ public class JellycordController : ControllerBase
             return Unauthorized();
         }
 
+        // reject rather than trim: silently dropping private tags would make those items public
+        var tags = (settings.PrivateTags ?? string.Empty).Trim();
+        if (tags.Length > MaxPrivateTagsLength)
+        {
+            return BadRequest(new { error = $"Private tags are limited to {MaxPrivateTagsLength} characters." });
+        }
+
         var clean = new UserSettings
         {
             AlwaysPrivate = settings.AlwaysPrivate,
             PrivateLibraryIds = (settings.PrivateLibraryIds ?? []).Where(s => Guid.TryParse(s, out _)).Distinct().Take(100).ToArray(),
-            PrivateTags = (settings.PrivateTags ?? string.Empty).Trim() is { Length: <= 1000 } t ? t : string.Empty,
+            PrivateTags = tags,
         };
         _store.SetSettings(id, clean);
         _tracker.Invalidate(id);
@@ -257,8 +309,8 @@ public class JellycordController : ControllerBase
     }
 
     [HttpPost("Me/Unlink")]
-    public async Task<ActionResult> UnlinkMe(CancellationToken ct)
-        => CallerId() is { } id ? await UnlinkCoreAsync(id, ct).ConfigureAwait(false) : Unauthorized();
+    public async Task<ActionResult> UnlinkMe()
+        => CallerId() is { } id ? await UnlinkCoreAsync(id).ConfigureAwait(false) : Unauthorized();
 
     // ---------------------------------------------------------------- admin
 
@@ -270,12 +322,12 @@ public class JellycordController : ControllerBase
             userId = a.UserId,
             userName = _userManager.GetUserById(a.UserId)?.Username ?? "(deleted user)",
             discordName = a.DiscordName,
-            needsRelink = _sink.IsDead(a.UserId),
+            needsRelink = NeedsRelink(a),
         }));
 
     [HttpPost("Accounts/{userId}/Unlink")]
     [Authorize(Policy = Policies.RequiresElevation)]
-    public Task<ActionResult> Unlink([FromRoute] Guid userId, CancellationToken ct) => UnlinkCoreAsync(userId, ct);
+    public Task<ActionResult> Unlink([FromRoute] Guid userId) => UnlinkCoreAsync(userId);
 
     /// <summary>Shows what Discord would get for an item: the activity JSON, including which image is used.</summary>
     [HttpGet("Preview/{itemId}")]
@@ -293,7 +345,7 @@ public class JellycordController : ControllerBase
         // admin rules only; per-user rules can add to this
         media = media with { IsPrivate = _privacy.IsPrivate(item!, cfg) };
         var artwork = media.IsPrivate ? null : await _artwork.ResolveAsync(media, cfg).ConfigureAwait(false);
-        var activity = PresenceMapper.Map(media, 0, false, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), cfg, artwork, _host.FriendlyName);
+        var activity = PresenceMapper.Map(media, 0, false, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), cfg, artwork);
         var source = PresenceMapper.PublicPosterUrl(media, cfg) is not null ? "public-url"
             : artwork is not null ? "lookup"
             : activity?.LargeImage is null ? "none" : "fallback";
@@ -320,32 +372,126 @@ public class JellycordController : ControllerBase
 
     // ---------------------------------------------------------------- helpers
 
+    internal static bool IsDiscordUrl(string url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var u)
+           && u.Scheme == Uri.UriSchemeHttps
+           && string.IsNullOrEmpty(u.UserInfo)
+           && (u.Host.Equals("discord.com", StringComparison.OrdinalIgnoreCase)
+               || u.Host.EndsWith(".discord.com", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Drops link codes nobody finished, so abandoned attempts don't stay in memory.</summary>
+    private static void PruneExpiredLinks()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var (userId, link) in Pending)
+        {
+            if (now > link.ExpiresAt)
+            {
+                Pending.TryRemove(new KeyValuePair<Guid, PendingLink>(userId, link));
+            }
+        }
+    }
+
+    /// <summary>Rejected by Discord, or issued to a different Discord application than the configured one.</summary>
+    private bool NeedsRelink(LinkedAccount account)
+        => _sink.IsDead(account.UserId)
+           || (!string.IsNullOrEmpty(account.ClientId) && !string.Equals(account.ClientId, DiscordClient.ClientId, StringComparison.Ordinal));
+
     private Guid? CallerId()
     {
         var claim = User.FindFirst("Jellyfin-UserId")?.Value;
         return Guid.TryParse(claim, out var id) && id != Guid.Empty ? id : null;
     }
 
-    private async Task<ActionResult> UnlinkCoreAsync(Guid userId, CancellationToken ct)
+    /// <summary>Stores a freshly approved link. Runs on its own timeout: the tokens exist now and must not be dropped.</summary>
+    private async Task<ActionResult> CompleteLinkAsync(LinkedAccount account)
     {
-        var account = _store.Remove(userId);
+        using var cts = new CancellationTokenSource(CommitTimeout);
+        try
+        {
+            var me = await _discord.GetMeAsync(account.AccessToken, cts.Token).ConfigureAwait(false);
+            account.DiscordName = me.Body.Str("global_name") ?? me.Body.Str("username") ?? "Discord user";
+        }
+        catch (OperationCanceledException)
+        {
+            account.DiscordName = "Discord user";
+        }
+
+        try
+        {
+            await _sink.RunExclusiveAsync(
+                account.UserId,
+                async () =>
+                {
+                    var replaced = _store.AddOrReplace(account);
+                    if (replaced is not null)
+                    {
+                        await _sink.ClearAndForgetAsync(replaced, cts.Token).ConfigureAwait(false);
+                    }
+
+                    _sink.Reset(account.UserId);
+                    return true;
+                },
+                cts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OperationCanceledException)
+        {
+            _logger.LogError(ex, "Could not store the Discord link for Jellyfin user {UserId}", account.UserId);
+            await RevokeAsync(account).ConfigureAwait(false);
+            return Ok(new { status = "failed", error = "The server couldn't save the link. Ask the admin to check the Jellyfin log, then try again." });
+        }
+
+        _tracker.Invalidate(account.UserId);
+        _logger.LogInformation("Linked Jellyfin user {UserId} to Discord {Discord}", account.UserId, account.DiscordName);
+        return Ok(new { status = "linked", discordName = account.DiscordName });
+    }
+
+    private async Task<ActionResult> UnlinkCoreAsync(Guid userId)
+    {
+        using var cts = new CancellationTokenSource(CommitTimeout);
+        var account = await _sink.RunExclusiveAsync(
+            userId,
+            async () =>
+            {
+                var removed = _store.Remove(userId);
+                if (removed is not null)
+                {
+                    await _sink.ClearAndForgetAsync(removed, cts.Token).ConfigureAwait(false);
+                }
+
+                return removed;
+            },
+            cts.Token).ConfigureAwait(false);
         if (account is null)
         {
             return NotFound(new { error = "Not linked." });
         }
 
-        await _sink.ClearAndForgetAsync(account, ct).ConfigureAwait(false);
         _tracker.Invalidate(userId);
+        await RevokeAsync(account).ConfigureAwait(false);
+        return Ok(new { unlinked = true });
+    }
+
+    /// <summary>Best effort: the link is already gone locally, and the user can revoke in Discord too.</summary>
+    private async Task RevokeAsync(LinkedAccount account)
+    {
+        using var cts = new CancellationTokenSource(CommitTimeout);
         foreach (var (token, hint) in new[] { (account.RefreshToken, "refresh_token"), (account.AccessToken, "access_token") })
         {
-            var res = await _discord.RevokeAsync(token, hint, ct).ConfigureAwait(false);
-            if (res.Status != 200)
+            try
             {
-                _logger.LogDebug("Revoking {Hint} returned {Status}", hint, res.Status);
+                var res = await _discord.RevokeAsync(token, hint, cts.Token).ConfigureAwait(false);
+                if (res.Status != 200)
+                {
+                    _logger.LogDebug("Revoking {Hint} returned {Status}", hint, res.Status);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Revoking Discord tokens for Jellyfin user {UserId} timed out", account.UserId);
+                return;
             }
         }
-
-        return Ok(new { unlinked = true });
     }
 
     private sealed class PendingLink
