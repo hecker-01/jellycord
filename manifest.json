@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/hecker-01/jellycord/main/assets/banner.png",
     "versions": [
       {
+        "version": "0.2.2.0",
+        "changelog": "**Full Changelog**: https://github.com/hecker-01/jellycord/compare/v0.2.1...v0.2.2",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/hecker-01/jellycord/releases/download/v0.2.2/jellycord_0.2.2.0.zip",
+        "checksum": "149f7d6c650a0c6b9e0cd3da8dc4e258",
+        "timestamp": "2026-10-26T14:43:45Z"
+      },
+      {
         "version": "0.2.1.0",
         "changelog": "**Full Changelog**: https://github.com/hecker-01/jellycord/compare/v0.2.0...v0.2.1",
         "targetAbi": "12.0.0.0",
