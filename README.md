@@ -47,7 +47,7 @@ Dashboard → Plugins → **Jellycord**:
 
 ### 4. Link users
 
-Users find **Discord status** in Jellyfin's own user menu (avatar → Discord status) and at the end of the **Settings** page (Profile, Display, … Controls, Discord status). It opens a native Jellyfin page where they link Discord and set their privacy options. No other plugin is needed: Jellycord adds its script to jellyfin-web's `index.html` as the server sends it, without changing any files on disk. You can turn this off in the plugin settings.
+Users find **Discord status** at the end of Jellyfin's **Settings** page (avatar → Settings → Discord status, after Profile, Display, … Controls). It opens a native Jellyfin page where they link Discord and set their privacy options. No other plugin is needed: Jellycord adds its script to jellyfin-web's `index.html` as the server sends it, without changing any files on disk. You can turn this off in the plugin settings.
 
 Apps that don't use jellyfin-web (Android TV, Swiftfin, Findroid…) don't show the entry. On those, users open **`https://<your-jellyfin>/jellycord/link`** in a browser where they're signed in to Jellyfin web. The admin page shows the URL.
 
@@ -130,7 +130,7 @@ src/Jellyfin.Plugin.Jellycord/
   Presence/   PresenceMapper (item → activity), IPresenceSink
   Discord/    DiscordClient (OAuth device flow + headless-sessions), HeadlessSessionSink, CredentialStore
   Api/        JellycordController (link page + endpoints)
-  Web/        configPage.html (admin), linkPage.html (users), web.js + WebInjection (middleware that adds web.js to jellyfin-web's index.html: user menu and Settings entries, native page)
+  Web/        configPage.html (admin), linkPage.html (users), web.js + WebInjection (middleware that adds web.js to jellyfin-web's index.html: Settings entry, native page)
 assets/               logo, banner, status icons (SVG sources + PNGs used by Discord and the catalog)
 spike/HeadlessSpike/   standalone API check
 docs/                  research report and notes

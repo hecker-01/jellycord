@@ -1,6 +1,6 @@
 /*
  * Jellycord web integration, added to jellyfin-web's index.html by the plugin (IndexHtmlMiddleware).
- * Adds "Discord status" to the user menu and the Settings page, and renders a native-looking
+ * Adds "Discord status" to the Settings page and renders a native-looking
  * settings page at #/jellycord (inside jellyfin-web's fallback page).
  */
 (function () {
@@ -14,7 +14,6 @@
     var PAGE_CLASSES = ['userPreferencesPage', 'noSecondaryNavPage'];
     // Material "graphic_eq": sound bars, matching Jellycord's status badge
     var ICON = 'graphic_eq';
-    var ICON_PATH = 'M7 18h2V6H7v12zm4 4h2V2h-2v20zm-8-8h2v-4H3v4zm12 4h2V6h-2v12zm4-8v4h2v-4h-2z';
 
     var pollTimer = null;
     var standaloneTimer = null;
@@ -46,30 +45,7 @@
 
     function norm(id) { return String(id || '').replace(/-/g, '').toLowerCase(); }
 
-    // ------------------------------------------------------------------ menu entries
-
-    function injectUserMenu() {
-        var menu = document.getElementById('app-user-menu');
-        if (!menu || menu.querySelector('.jellycordMenuItem')) { return; }
-        var settings = menu.querySelector('a[href="#/mypreferencesmenu"]');
-        if (!settings) { return; }
-
-        var item = settings.cloneNode(true);
-        item.classList.add('jellycordMenuItem');
-        item.setAttribute('href', ROUTE);
-        var path = item.querySelector('svg path');
-        if (path) { path.setAttribute('d', ICON_PATH); }
-        var svg = item.querySelector('svg');
-        if (svg) { svg.removeAttribute('data-testid'); }
-        var text = item.querySelector('.MuiListItemText-primary') || item.querySelector('span');
-        if (text) { text.textContent = LABEL; }
-        item.addEventListener('click', function () {
-            // the clone has no React handler, so close the menu ourselves
-            var backdrop = menu.querySelector('.MuiBackdrop-root');
-            if (backdrop) { backdrop.click(); }
-        });
-        settings.insertAdjacentElement('afterend', item);
-    }
+    // ------------------------------------------------------------------ settings entry
 
     function injectSettingsLink() {
         // the user's own section of Settings (Profile ... Controls): ours goes at the end of it
@@ -221,7 +197,7 @@
             }
             if (me.linked) {
                 box.innerHTML =
-                    '<div class="listItem" style="padding-left:0"><span class="material-icons listItemIcon" style="background:#3ecf6e" aria-hidden="true">check</span>' +
+                    '<div class="listItem" style="padding-left:0"><span class="material-icons listItemIcon" style="background:#3ecf6e !important;color:#fff !important" aria-hidden="true">check</span>' +
                     '<div class="listItemBody"><div class="listItemBodyText">Linked to <b>' + esc(me.discordName) + '</b></div>' +
                     (me.needsRelink ? '<div class="listItemBodyText secondary">Discord rejected the saved link. Link again to resume.</div>' : '') +
                     '</div></div>' +
@@ -352,12 +328,11 @@
     function tick() {
         scheduled = false;
         if (!client()) { return; }
-        injectUserMenu();
         injectSettingsLink();
         renderPage();
     }
 
-    // The user menu is a portal and settings pages are swapped in anywhere under <body>, so this
+    // Settings pages are swapped in anywhere under <body>, so this
     // watches the whole tree; it is throttled to one cheap check per frame.
     new MutationObserver(function () {
         if (!scheduled) {

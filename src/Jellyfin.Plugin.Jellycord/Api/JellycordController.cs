@@ -87,7 +87,7 @@ public class JellycordController : ControllerBase
         return File(stream, "text/html; charset=utf-8");
     }
 
-    /// <summary>Script added to jellyfin-web's index.html (user menu and Settings entries, native page).</summary>
+    /// <summary>Script added to jellyfin-web's index.html (Settings entry, native page).</summary>
     [HttpGet("web.js")]
     [AllowAnonymous]
     public ActionResult GetWebScript()
