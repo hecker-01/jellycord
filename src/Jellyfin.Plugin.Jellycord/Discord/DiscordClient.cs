@@ -8,12 +8,26 @@ namespace Jellyfin.Plugin.Jellycord.Discord;
 /// <summary>The user's Discord grant is gone (revoked or expired); they need to link again.</summary>
 public sealed class InvalidGrantException : Exception
 {
+    public InvalidGrantException()
+        : base("The Discord grant is no longer valid")
+    {
+    }
+
+    public InvalidGrantException(string message)
+        : base(message)
+    {
+    }
+
+    public InvalidGrantException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
 }
 
 /// <summary>Status code (0 = network failure) plus parsed JSON body.</summary>
 public readonly record struct DiscordResponse(int Status, JsonNode? Body)
 {
-    public string? Error => Body?["error"]?.GetValue<string>();
+    public string? Error => Body.Str("error");
 }
 
 /// <summary>
@@ -35,7 +49,7 @@ public sealed class DiscordClient
         _store = store;
     }
 
-    private static string ClientId => Plugin.Instance?.Configuration.ClientId.Trim() ?? string.Empty;
+    internal static string ClientId => Plugin.Instance?.Configuration.ClientId.Trim() ?? string.Empty;
 
     public Task<DiscordResponse> DeviceAuthorizeAsync(CancellationToken ct)
         => PostFormAsync("/oauth2/device/authorize", ct, ("scope", Scope));
@@ -53,9 +67,21 @@ public sealed class DiscordClient
     public Task<DiscordResponse> GetMeAsync(string accessToken, CancellationToken ct)
         => SendAsync(HttpMethod.Get, "/users/@me", null, accessToken, ct);
 
-    /// <summary>Refreshes the account's tokens when close to expiry (or when forced).</summary>
+    /// <summary>
+    /// Refreshes the account's tokens when close to expiry (or when forced).
+    /// Discord rotates the refresh token, so callers must not refresh one account concurrently
+    /// (<see cref="HeadlessSessionSink"/> serializes this per user).
+    /// </summary>
     public async Task RefreshAsync(LinkedAccount account, bool force, CancellationToken ct)
     {
+        // tokens only work with the application that issued them; refreshing them with another
+        // client_id fails anyway, so don't spend a request on it
+        var clientId = ClientId;
+        if (!string.IsNullOrEmpty(account.ClientId) && !string.Equals(account.ClientId, clientId, StringComparison.Ordinal))
+        {
+            throw new InvalidGrantException("linked with a different Discord application than the one configured now");
+        }
+
         const long margin = 6 * 3600;
         if (!force && DateTimeOffset.UtcNow.ToUnixTimeSeconds() < account.ExpiresAt - margin)
         {
@@ -70,25 +96,41 @@ public sealed class DiscordClient
             throw new InvalidGrantException();
         }
 
-        if (res.Status != 200 || res.Body?["access_token"] is null)
+        if (res.Status != 200 || !TryReadTokens(res.Body, out var tokens))
         {
             throw new HttpRequestException($"Discord token refresh failed ({res.Status})");
         }
 
-        ApplyTokens(account, res.Body);
-        _store.Save(account);
+        _store.UpdateTokens(account, tokens, clientId);
     }
 
-    public static void ApplyTokens(LinkedAccount account, JsonNode body)
+    /// <summary>Fills a new, not yet stored account from a token response.</summary>
+    public static bool TryApplyTokens(LinkedAccount account, JsonNode? body)
     {
-        account.AccessToken = body["access_token"]!.GetValue<string>();
-        var rotated = body["refresh_token"]?.GetValue<string>();
-        if (!string.IsNullOrEmpty(rotated))
+        if (!TryReadTokens(body, out var tokens))
         {
-            account.RefreshToken = rotated;
+            return false;
         }
 
-        account.ExpiresAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + (body["expires_in"]?.GetValue<long>() ?? 604800);
+        account.AccessToken = tokens.AccessToken;
+        account.RefreshToken = tokens.RefreshToken ?? string.Empty;
+        account.ExpiresAt = tokens.ExpiresAt;
+        account.ClientId = ClientId;
+        return true;
+    }
+
+    internal static bool TryReadTokens(JsonNode? body, out TokenSet tokens)
+    {
+        var access = body.Str("access_token");
+        if (string.IsNullOrEmpty(access))
+        {
+            tokens = default;
+            return false;
+        }
+
+        var expiresIn = (long)(body.Num("expires_in") ?? 604800);
+        tokens = new TokenSet(access, body.Str("refresh_token"), DateTimeOffset.UtcNow.ToUnixTimeSeconds() + expiresIn);
+        return true;
     }
 
     /// <summary>Creates (sessionToken null) or updates a headless session. The response carries a rotated token.</summary>
@@ -157,13 +199,11 @@ public sealed class DiscordClient
 
             return new DiscordResponse((int)response.StatusCode, body);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ex is HttpRequestException or IOException
+                                   || (ex is TaskCanceledException && !ct.IsCancellationRequested))
         {
-            return new DiscordResponse(0, new JsonObject { ["error"] = ex.Message });
-        }
-        catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
-        {
-            return new DiscordResponse(0, new JsonObject { ["error"] = ex.Message });
+            // status 0 = network failure; the message stays server-side (it can name hosts and IPs)
+            return new DiscordResponse(0, new JsonObject { ["network_error"] = ex.Message });
         }
     }
 }

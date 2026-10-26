@@ -55,6 +55,37 @@ public sealed class CredentialStoreTests : IDisposable
         Assert.Equal("new", NewStore().ClientSecret);
     }
 
+    [Fact]
+    public void FailedSave_LeavesMemoryMatchingDisk()
+    {
+        var store = NewStore();
+        var kept = new LinkedAccount { UserId = Guid.NewGuid(), RefreshToken = "kept" };
+        store.AddOrReplace(kept);
+
+        // a directory where the file should be makes every later save fail
+        File.Delete(FilePath);
+        Directory.CreateDirectory(FilePath);
+
+        Assert.ThrowsAny<IOException>(() => store.AddOrReplace(new LinkedAccount { UserId = Guid.NewGuid() }));
+        Assert.ThrowsAny<IOException>(() => store.Remove(kept.UserId));
+        Assert.Equal([kept], store.GetAccounts());
+    }
+
+    [Fact]
+    public void FailedSave_KeepsRefreshedTokensInMemory()
+    {
+        var store = NewStore();
+        var account = new LinkedAccount { UserId = Guid.NewGuid(), RefreshToken = "old" };
+        store.AddOrReplace(account);
+        File.Delete(FilePath);
+        Directory.CreateDirectory(FilePath);
+
+        // Discord already invalidated "old"; losing "new" as well would kill the link
+        store.UpdateTokens(account, new TokenSet("access", "new", 0), "app");
+
+        Assert.Equal("new", store.Find(account.UserId)!.RefreshToken);
+    }
+
     /// <summary>Just enough of IApplicationPaths for the store, without a mocking library.</summary>
     public class PathsProxy : DispatchProxy
     {

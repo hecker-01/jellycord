@@ -17,7 +17,13 @@ public sealed class LinkedAccount
 
     /// <summary>Unix seconds.</summary>
     public long ExpiresAt { get; set; }
+
+    /// <summary>The Discord application the tokens were issued to. Empty for links made before this was recorded.</summary>
+    public string ClientId { get; set; } = string.Empty;
 }
+
+/// <summary>Tokens from a Discord token response. A null refresh token means "keep the current one".</summary>
+public readonly record struct TokenSet(string AccessToken, string? RefreshToken, long ExpiresAt);
 
 /// <summary>Per-user privacy choices. They only ever add to the admin's rules.</summary>
 public sealed class UserSettings
@@ -71,8 +77,9 @@ public sealed class CredentialStore
         {
             lock (_lock)
             {
+                var old = _data.ClientSecret;
                 _data.ClientSecret = value;
-                SaveLocked();
+                SaveOrRevertLocked(() => _data.ClientSecret = old);
             }
         }
     }
@@ -98,14 +105,28 @@ public sealed class CredentialStore
     {
         lock (_lock)
         {
-            var old = _data.Accounts.FirstOrDefault(a => a.UserId == account.UserId);
+            var index = _data.Accounts.FindIndex(a => a.UserId == account.UserId);
+            var old = index >= 0 ? _data.Accounts[index] : null;
             if (old is not null)
             {
-                _data.Accounts.Remove(old);
+                _data.Accounts[index] = account;
+            }
+            else
+            {
+                _data.Accounts.Add(account);
             }
 
-            _data.Accounts.Add(account);
-            SaveLocked();
+            SaveOrRevertLocked(() =>
+            {
+                if (old is not null)
+                {
+                    _data.Accounts[index] = old;
+                }
+                else
+                {
+                    _data.Accounts.Remove(account);
+                }
+            });
             return old;
         }
     }
@@ -114,13 +135,15 @@ public sealed class CredentialStore
     {
         lock (_lock)
         {
-            var old = _data.Accounts.FirstOrDefault(a => a.UserId == userId);
-            if (old is not null)
+            var index = _data.Accounts.FindIndex(a => a.UserId == userId);
+            if (index < 0)
             {
-                _data.Accounts.Remove(old);
-                SaveLocked();
+                return null;
             }
 
+            var old = _data.Accounts[index];
+            _data.Accounts.RemoveAt(index);
+            SaveOrRevertLocked(() => _data.Accounts.Insert(index, old));
             return old;
         }
     }
@@ -137,20 +160,71 @@ public sealed class CredentialStore
     {
         lock (_lock)
         {
+            var had = _data.UserSettings.TryGetValue(userId, out var old);
             _data.UserSettings[userId] = settings;
-            SaveLocked();
+            SaveOrRevertLocked(() =>
+            {
+                if (had)
+                {
+                    _data.UserSettings[userId] = old!;
+                }
+                else
+                {
+                    _data.UserSettings.Remove(userId);
+                }
+            });
         }
     }
 
-    /// <summary>Persists in-place token changes to an account that is still linked.</summary>
-    public void Save(LinkedAccount account)
+    /// <summary>
+    /// Applies refreshed tokens (and records which application issued them). Unlike the other
+    /// writes these stay in memory even if saving fails: Discord has already invalidated the old
+    /// refresh token, so the new one is the only one that still works. The next successful write
+    /// persists them.
+    /// </summary>
+    public void UpdateTokens(LinkedAccount account, TokenSet tokens, string clientId)
     {
         lock (_lock)
         {
-            if (_data.Accounts.Contains(account))
+            account.AccessToken = tokens.AccessToken;
+            if (!string.IsNullOrEmpty(tokens.RefreshToken))
+            {
+                account.RefreshToken = tokens.RefreshToken;
+            }
+
+            account.ExpiresAt = tokens.ExpiresAt;
+            if (string.IsNullOrEmpty(account.ClientId))
+            {
+                account.ClientId = clientId;
+            }
+
+            if (!_data.Accounts.Contains(account))
+            {
+                return;
+            }
+
+            try
             {
                 SaveLocked();
             }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogError(ex, "Could not save refreshed Discord tokens for {User}; keeping them in memory until the next successful save", account.DiscordName);
+            }
+        }
+    }
+
+    /// <summary>Saves, or undoes the in-memory change and rethrows, so memory never runs ahead of disk.</summary>
+    private void SaveOrRevertLocked(Action revert)
+    {
+        try
+        {
+            SaveLocked();
+        }
+        catch
+        {
+            revert();
+            throw;
         }
     }
 
