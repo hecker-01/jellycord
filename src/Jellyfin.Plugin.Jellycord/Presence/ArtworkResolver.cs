@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.Jellycord.Configuration;
 using MediaBrowser.Common.Net;
@@ -27,6 +29,7 @@ public sealed partial class ArtworkResolver
     private static readonly TimeSpan PositiveTtl = TimeSpan.FromHours(24);
     private static readonly TimeSpan UploadTtl = TimeSpan.FromHours(70); // Litterbox keeps files 72h
     private static readonly TimeSpan NegativeTtl = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan ErrorTtl = TimeSpan.FromMinutes(2); // a failed lookup may just be a blip
     private static readonly TimeSpan LookupTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan UploadTimeout = TimeSpan.FromSeconds(30);
 
@@ -74,24 +77,47 @@ public sealed partial class ArtworkResolver
         try
         {
             var (url, ttl, uploadTried) = await LookupAsync(itemId, cfg).ConfigureAwait(false);
-            if (_cache.Count >= MaxCacheEntries)
-            {
-                _cache.Clear();
-            }
-
-            _cache[itemId] = new Entry(url, DateTimeOffset.UtcNow + ttl, uploadTried);
+            Store(itemId, new Entry(url, DateTimeOffset.UtcNow + ttl, uploadTried));
             return url;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Artwork lookup for {Item} failed", itemId);
-            _cache[itemId] = new Entry(null, DateTimeOffset.UtcNow + NegativeTtl, cfg.UploadArtwork);
+            Store(itemId, new Entry(null, DateTimeOffset.UtcNow + ErrorTtl, cfg.UploadArtwork));
             return null;
         }
         finally
         {
             _inflight.TryRemove(itemId, out _);
         }
+    }
+
+    /// <summary>
+    /// When full, drops expired entries, then the ones expiring soonest. Uploads live longest, so they
+    /// are the last to go (re-uploading means another copy of the poster on a public host).
+    /// </summary>
+    private void Store(Guid itemId, Entry entry)
+    {
+        if (_cache.Count >= MaxCacheEntries)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var victims = _cache.Where(kv => kv.Value.Expires <= now).Select(kv => kv.Key).ToList();
+            if (_cache.Count - victims.Count >= MaxCacheEntries)
+            {
+                victims.AddRange(_cache
+                    .Where(kv => kv.Value.Expires > now)
+                    .OrderBy(kv => kv.Value.Expires)
+                    .Take(MaxCacheEntries / 10)
+                    .Select(kv => kv.Key));
+            }
+
+            foreach (var key in victims)
+            {
+                _cache.TryRemove(key, out _);
+            }
+        }
+
+        _cache[itemId] = entry;
     }
 
     private async Task<(string? Url, TimeSpan Ttl, bool UploadTried)> LookupAsync(Guid itemId, PluginConfiguration cfg)
@@ -118,7 +144,12 @@ public sealed partial class ArtworkResolver
                 item,
                 new RemoteImageQuery(string.Empty) { ImageType = ImageType.Primary, IncludeAllLanguages = false },
                 ct).ConfigureAwait(false);
-            var best = remote.FirstOrDefault(r => IsPublicHttps(r.Url));
+            // prefer the highest-rated image, which is what Jellyfin itself picks by default
+            var best = remote
+                .Where(r => IsPublicHttps(r.Url))
+                .OrderByDescending(r => r.CommunityRating ?? 0)
+                .ThenByDescending(r => r.VoteCount ?? 0)
+                .FirstOrDefault();
             if (best is not null)
             {
                 _logger.LogDebug("Artwork for {Name} from {Provider}", item.Name, best.ProviderName);
@@ -191,11 +222,64 @@ public sealed partial class ArtworkResolver
         return content;
     }
 
+    /// <summary>
+    /// An HTTPS URL Discord can fetch and anyone may see: no credentials, no API key, and not a
+    /// LAN, link-local, CGNAT/Tailscale or other private address (Discord couldn't reach those anyway).
+    /// </summary>
     internal static bool IsPublicHttps(string? url)
         => Uri.TryCreate(url, UriKind.Absolute, out var u)
            && u.Scheme == Uri.UriSchemeHttps
-           && !u.IsLoopback
-           && url!.Length <= 300;
+           && url!.Length <= 300
+           && string.IsNullOrEmpty(u.UserInfo)
+           && !HasSecretQuery(u.Query)
+           && IsPublicHost(u);
+
+    internal static bool IsPublicHost(Uri u)
+    {
+        if (u.IsLoopback)
+        {
+            return false;
+        }
+
+        if (u.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6)
+        {
+            return IPAddress.TryParse(u.DnsSafeHost, out var ip) && IsPublicAddress(ip);
+        }
+
+        var host = u.DnsSafeHost.TrimEnd('.');
+        return host.Contains('.', StringComparison.Ordinal)
+               && !PrivateSuffixes.Any(s => host.EndsWith(s, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static readonly string[] PrivateSuffixes = [".local", ".lan", ".internal", ".home.arpa", ".localdomain"];
+
+    private static bool IsPublicAddress(IPAddress ip)
+    {
+        if (ip.IsIPv4MappedToIPv6)
+        {
+            ip = ip.MapToIPv4();
+        }
+
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            // link-local, site-local and unique-local (fc00::/7)
+            return !ip.IsIPv6LinkLocal && !ip.IsIPv6SiteLocal && !ip.IsIPv6UniqueLocal && !IPAddress.IsLoopback(ip);
+        }
+
+        var b = ip.GetAddressBytes();
+        return !(b[0] == 10
+                 || b[0] == 127
+                 || b[0] == 0
+                 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
+                 || (b[0] == 192 && b[1] == 168)
+                 || (b[0] == 169 && b[1] == 254)
+                 || (b[0] == 100 && b[1] >= 64 && b[1] <= 127)); // CGNAT, used by Tailscale
+    }
+
+    private static bool HasSecretQuery(string query)
+        => query.Contains("api_key", StringComparison.OrdinalIgnoreCase)
+           || query.Contains("apikey", StringComparison.OrdinalIgnoreCase)
+           || query.Contains("token", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>TMDB "original" images can be several MB; Discord only needs a small square.</summary>
     internal static string Shrink(string url) => TmdbOriginal().Replace(url, "/t/p/w500/");

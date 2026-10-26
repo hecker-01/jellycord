@@ -38,7 +38,7 @@ Manual install: download the zip from [Releases](https://github.com/hecker-01/je
 Dashboard → Plugins → **Jellycord**:
 
 - **Application ID**: from step 1.
-- **Public server URL** (optional): set this only if your server is reachable from the internet over HTTPS (`https://jellyfin.example.com`). Discord then loads posters straight from it. Image URLs never include an API key. Leave it empty for LAN, Tailscale or VPN-only servers (see [Posters on private servers](#posters-on-private-servers)).
+- **Public server URL** (optional): set this only if your server is reachable from the internet over HTTPS (`https://jellyfin.example.com`). Discord then loads posters straight from it. Image URLs never include an API key, but they do show your server's hostname to anyone who looks at the poster. Leave it empty for LAN, Tailscale or VPN-only servers (see [Posters on private servers](#posters-on-private-servers)).
 - **Upload posters as a last resort** (optional, off): see below.
 - **Fallback image** (optional): shown when there's no poster. Leave it empty for the Jellycord logo, or use an https image URL, an art asset key from your Discord app, or `none`.
 - **Status badge**: a small playing/paused icon on the corner of the artwork (on by default).

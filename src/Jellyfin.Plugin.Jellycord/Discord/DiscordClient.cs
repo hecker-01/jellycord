@@ -40,6 +40,9 @@ public sealed class DiscordClient
     public const string Scope = "sdk.social_layer_presence";
     private const string ApiBase = "https://discord.com/api/v10";
 
+    /// <summary>Per request. The default HttpClient timeout (100s) would stall the presence loop.</summary>
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(15);
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly CredentialStore _store;
 
@@ -173,6 +176,8 @@ public sealed class DiscordClient
         HttpMethod method, string path, HttpContent? content, string? bearer, CancellationToken ct)
     {
         using var client = _httpClientFactory.CreateClient(NamedClient.Default);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(RequestTimeout);
         using var request = new HttpRequestMessage(method, ApiBase + path) { Content = content };
         request.Headers.UserAgent.ParseAdd("Jellycord (https://github.com/hecker-01/jellycord)");
         if (bearer is not null)
@@ -182,8 +187,8 @@ public sealed class DiscordClient
 
         try
         {
-            using var response = await client.SendAsync(request, ct).ConfigureAwait(false);
-            var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var response = await client.SendAsync(request, timeout.Token).ConfigureAwait(false);
+            var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
             JsonNode? body = null;
             if (!string.IsNullOrWhiteSpace(text))
             {
@@ -200,7 +205,7 @@ public sealed class DiscordClient
             return new DiscordResponse((int)response.StatusCode, body);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException
-                                   || (ex is TaskCanceledException && !ct.IsCancellationRequested))
+                                   || (ex is OperationCanceledException && !ct.IsCancellationRequested))
         {
             // status 0 = network failure; the message stays server-side (it can name hosts and IPs)
             return new DiscordResponse(0, new JsonObject { ["network_error"] = ex.Message });

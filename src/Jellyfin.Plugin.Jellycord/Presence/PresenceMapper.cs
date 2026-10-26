@@ -7,6 +7,7 @@ namespace Jellyfin.Plugin.Jellycord.Presence;
 public static class PresenceMapper
 {
     private const int MaxText = 128;
+    private const string PausedSuffix = " · Paused";
     private const string AssetBase = "https://raw.githubusercontent.com/hecker-01/jellycord/main/assets/";
 
     public const string LogoUrl = AssetBase + "logo.png";
@@ -88,14 +89,24 @@ public static class PresenceMapper
 
         if (paused)
         {
-            state = state is null ? "Paused" : $"{state} · Paused";
+            // truncate before appending, so a long episode line can't push "Paused" off the end
+            state = Fit(state, MaxText - PausedSuffix.Length) is { } s ? s + PausedSuffix : "Paused";
         }
 
         long? start = null, end = null;
-        if (!paused && media.RunTimeTicks is > 0)
+        if (!paused)
         {
-            start = nowMs - (positionTicks / TimeSpan.TicksPerMillisecond);
-            end = start + (media.RunTimeTicks.Value / TimeSpan.TicksPerMillisecond);
+            start = nowMs - (Math.Max(0, positionTicks) / TimeSpan.TicksPerMillisecond);
+            if (media.RunTimeTicks is > 0)
+            {
+                end = start + (media.RunTimeTicks.Value / TimeSpan.TicksPerMillisecond);
+            }
+
+            // unknown runtime, or played past it: an elapsed timer rather than no timer or a full bar
+            if (end <= nowMs)
+            {
+                end = null;
+            }
         }
 
         var largeImage = ResolveImage(media, cfg, artworkUrl);
@@ -104,7 +115,8 @@ public static class PresenceMapper
         return new PresenceActivity
         {
             Type = type,
-            Name = Fit(name)!,
+            // Discord rejects an activity without a name
+            Name = Fit(name) ?? "Unknown title",
             Details = Fit(details),
             State = Fit(state),
             StartMs = start,
@@ -163,10 +175,12 @@ public static class PresenceMapper
         // it is visible to anyone looking at the profile.
         if (Uri.TryCreate(cfg.PublicUrl?.Trim(), UriKind.Absolute, out var baseUri)
             && baseUri.Scheme == Uri.UriSchemeHttps
-            && !baseUri.IsLoopback)
+            && ArtworkResolver.IsPublicHost(baseUri))
         {
+            // scheme, host, port and path only: never user-info, a query or a fragment from the setting
+            var root = baseUri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped);
             var id = media.ImageItemId == Guid.Empty ? media.ItemId : media.ImageItemId;
-            var url = $"{baseUri.AbsoluteUri.TrimEnd('/')}/Items/{id:N}/Images/Primary?fillHeight=512&quality=90";
+            var url = $"{root.TrimEnd('/')}/Items/{id:N}/Images/Primary?fillHeight=512&quality=90";
             if (url.Length <= 300)
             {
                 return url;
@@ -178,18 +192,33 @@ public static class PresenceMapper
 
     private static string Coalesce(string? a, string b) => string.IsNullOrWhiteSpace(a) ? b : a;
 
-    /// <summary>Discord wants 2..128 chars.</summary>
-    internal static string? Fit(string? s)
+    /// <summary>Discord wants 2..128 chars on one line.</summary>
+    internal static string? Fit(string? s, int max = MaxText)
     {
         if (string.IsNullOrWhiteSpace(s))
         {
             return null;
         }
 
-        s = s.Trim();
-        if (s.Length > MaxText)
+        // newlines, tabs and other control characters become spaces
+        s = string.Create(s.Length, s, static (span, src) =>
         {
-            s = string.Concat(s.AsSpan(0, MaxText - 1), "…");
+            for (var i = 0; i < src.Length; i++)
+            {
+                span[i] = char.IsControl(src[i]) ? ' ' : src[i];
+            }
+        }).Trim();
+
+        if (s.Length > max)
+        {
+            // never split a surrogate pair (emoji, rare CJK): a lone half is invalid UTF-16
+            var keep = max - 1;
+            if (char.IsHighSurrogate(s[keep - 1]))
+            {
+                keep--;
+            }
+
+            s = string.Concat(s.AsSpan(0, keep), "…");
         }
 
         return s.Length < 2 ? s.PadRight(2, '⠀') : s;

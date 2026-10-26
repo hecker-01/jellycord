@@ -15,6 +15,9 @@ public sealed class HeadlessSessionSink : IPresenceSink
     private readonly ConcurrentDictionary<Guid, string> _sessionTokens = new();
     private readonly ConcurrentDictionary<Guid, bool> _deadLinks = new();
 
+    // when Discord asked us to back off for longer than we're willing to wait inline
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _retryAfter = new();
+
     // One operation per user at a time: Discord rotates refresh tokens, so two concurrent refreshes
     // kill the link, and an update racing an unlink could re-create a session after it was deleted.
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
@@ -36,6 +39,7 @@ public sealed class HeadlessSessionSink : IPresenceSink
     {
         _deadLinks.TryRemove(userId, out _);
         _sessionTokens.TryRemove(userId, out _);
+        _retryAfter.TryRemove(userId, out _);
     }
 
     /// <summary>True when the user's link was rejected by Discord and they must link again.</summary>
@@ -93,6 +97,16 @@ public sealed class HeadlessSessionSink : IPresenceSink
             return false;
         }
 
+        if (_retryAfter.TryGetValue(userId, out var until))
+        {
+            if (DateTimeOffset.UtcNow < until)
+            {
+                return false;
+            }
+
+            _retryAfter.TryRemove(userId, out _);
+        }
+
         try
         {
             var forcedRefresh = false;
@@ -124,19 +138,20 @@ public sealed class HeadlessSessionSink : IPresenceSink
                         var seconds = res.Status == 202 ? retry / 1000 : retry;
                         if (seconds > 10)
                         {
+                            // remember it, so the tracker's retries don't hit Discord during the wait
+                            _retryAfter[userId] = DateTimeOffset.UtcNow.AddSeconds(Math.Min(seconds, 3600));
                             _logger.LogInformation("Discord asked {User} to wait {Seconds:0}s", account.DiscordName, seconds);
                             return false;
                         }
 
                         await Task.Delay(TimeSpan.FromSeconds(Math.Max(seconds, 0.5)), ct).ConfigureAwait(false);
                         continue;
+                    case >= 400 and < 500 when sessionToken is not null:
+                        // session expired or token out of sync: start a fresh one. Network errors (0)
+                        // and 5xx keep the session, or every outage would orphan one per user.
+                        _sessionTokens.TryRemove(userId, out _);
+                        continue;
                     default:
-                        if (sessionToken is not null)
-                        {
-                            // session expired or token out of sync: start a fresh one
-                            _sessionTokens.TryRemove(userId, out _);
-                            continue;
-                        }
 
                         _logger.LogWarning(
                             "Headless session post for {User} failed: {Status} {Body}",

@@ -12,8 +12,8 @@ public enum PresenceAction
 /// <summary>Pure rules for when to talk to Discord. Kept separate from the tracker so they can be unit tested.</summary>
 public static class PresenceDecision
 {
-    /// <summary>Discord allows ~5 presence updates per 20s; stay well below that.</summary>
-    public const long MinSendIntervalMs = 4_000;
+    /// <summary>Discord allows ~5 presence updates per 20s (one per 4s); stay below that. Applies to clears too.</summary>
+    public const long MinSendIntervalMs = 6_000;
 
     /// <summary>Headless sessions expire after 20 minutes; refresh at 14.</summary>
     public const long HeartbeatMs = 14 * 60_000;
@@ -45,12 +45,8 @@ public static class PresenceDecision
 
             // still playing but hidden (e.g. paused with "show when paused" off): clear right away.
             // nothing playing: wait out the grace period so autoplay into the next item doesn't flicker.
-            if (hasSessions || stoppedAtMs is null || nowMs - stoppedAtMs.Value >= clearDelayMs)
-            {
-                return PresenceAction.Clear;
-            }
-
-            return PresenceAction.None;
+            var due = hasSessions || stoppedAtMs is null || nowMs - stoppedAtMs.Value >= clearDelayMs;
+            return due && nowMs - lastSentAtMs >= MinSendIntervalMs ? PresenceAction.Clear : PresenceAction.None;
         }
 
         var changed = lastSent is null
