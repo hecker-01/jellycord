@@ -149,4 +149,4 @@ The headless-sessions flow follows [mrzeappleGit/jellyfin-plugin-discord-presenc
 
 ## License
 
-MIT
+[GNU General Public License v3.0](LICENSE)
