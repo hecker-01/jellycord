@@ -56,7 +56,7 @@
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowEpisodes" /><span>Show TV episodes</span></label>
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowMusic" /><span>Show music (as "Listening to")</span></label>
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowWhenPaused" /><span>Keep status while paused</span></label>
-                    <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="InjectWebUi" /><span>Add "Discord status" to the user menu and Settings page (needs the File Transformation plugin; reload jellyfin-web in the browser after changing)</span></label>
+                    <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="InjectWebUi" /><span>Add "Discord status" to the user menu and Settings page (reload jellyfin-web in the browser after changing)</span></label>
                     <label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" id="ShowStatusIcon" /><span>Show a small playing/paused badge on the artwork</span></label>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="ClearDelaySeconds">Clear delay after stop (seconds)</label>
@@ -135,7 +135,7 @@
             }
 
             function loadSecretState() {
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('Jellycord/ClientSecret'), dataType: 'json' }).then(function (s) {
+                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('jellycord/clientsecret'), dataType: 'json' }).then(function (s) {
                     page.querySelector('#ClientSecretState').textContent = s.isSet
                         ? 'A secret is saved. Enter a new value to replace it.'
                         : 'Only needed if Public Client is off. Never shown again once saved.';
@@ -144,7 +144,7 @@
             }
 
             function loadAccounts() {
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('Jellycord/Accounts'), dataType: 'json' }).then(function (list) {
+                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('jellycord/accounts'), dataType: 'json' }).then(function (list) {
                     var el = page.querySelector('#Accounts');
                     if (!list.length) {
                         el.innerHTML = '<p class="fieldDescription">No users linked yet.</p>';
@@ -162,7 +162,7 @@
                             var name = b.closest('tr').querySelector('td').textContent;
                             if (!window.confirm('Unlink Discord for ' + name + '? Their status stops updating until they link again.')) { return; }
                             b.disabled = true;
-                            ApiClient.ajax({ type: 'POST', url: ApiClient.getUrl('Jellycord/Accounts/' + b.getAttribute('data-unlink') + '/Unlink') })
+                            ApiClient.ajax({ type: 'POST', url: ApiClient.getUrl('jellycord/accounts/' + b.getAttribute('data-unlink') + '/unlink') })
                                 .then(loadAccounts, function () {
                                     Dashboard.alert('Unlinking failed. Check the Jellyfin log and try again.');
                                     loadAccounts();
@@ -189,7 +189,7 @@
                     Dashboard.alert('Could not load the Jellycord settings. Reload the page before saving.');
                 });
                 loadSecretState();
-                var url = ApiClient.getUrl('Jellycord/Link');
+                var url = ApiClient.getUrl('jellycord/link');
                 var a = page.querySelector('#LinkPageUrl');
                 a.href = url;
                 a.textContent = url;
@@ -198,7 +198,7 @@
 
             function postSecret(value) {
                 return ApiClient.ajax({
-                    type: 'POST', url: ApiClient.getUrl('Jellycord/ClientSecret'),
+                    type: 'POST', url: ApiClient.getUrl('jellycord/clientsecret'),
                     data: JSON.stringify({ Value: value }), contentType: 'application/json'
                 });
             }

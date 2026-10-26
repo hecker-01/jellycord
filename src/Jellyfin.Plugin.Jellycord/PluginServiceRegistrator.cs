@@ -3,6 +3,7 @@ using Jellyfin.Plugin.Jellycord.Playback;
 using Jellyfin.Plugin.Jellycord.Presence;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Jellyfin.Plugin.Jellycord;
@@ -19,6 +20,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IPresenceSink>(sp => sp.GetRequiredService<HeadlessSessionSink>());
         serviceCollection.AddSingleton<PlaybackTracker>();
         serviceCollection.AddHostedService(sp => sp.GetRequiredService<PlaybackTracker>());
-        serviceCollection.AddHostedService<Web.WebInjection>();
+        serviceCollection.AddTransient<IStartupFilter, Web.WebInjectionStartupFilter>();
     }
 }

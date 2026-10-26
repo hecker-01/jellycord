@@ -1,113 +1,104 @@
-using System.Reflection;
-using System.Runtime.Loader;
 using System.Security.Cryptography;
-using System.Text.Json;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using System.Text;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Net.Http.Headers;
 
 namespace Jellyfin.Plugin.Jellycord.Web;
 
 /// <summary>
-/// If the File Transformation plugin is installed, injects web.js into jellyfin-web's index.html,
-/// which adds a native "Discord status" entry to the user menu and Settings page.
-/// File Transformation is loaded in its own context, so it is driven purely through reflection.
+/// Puts <see cref="IndexHtmlMiddleware"/> in front of Jellyfin's own pipeline, so web.js can be
+/// added to jellyfin-web's index.html without any other plugin and without touching files on disk.
 /// </summary>
-public sealed class WebInjection : IHostedService
+public sealed class WebInjectionStartupFilter : IStartupFilter
 {
-    private static readonly Guid TransformationId = Guid.Parse("4f1c2f0e-5c8a-4f53-9d1e-7a3b5c9e2d10");
-
-    private readonly ILogger<WebInjection> _logger;
-
-    public WebInjection(ILogger<WebInjection> logger)
-    {
-        _logger = logger;
-    }
-
-    private const int Attempts = 6;
-
-    public Task StartAsync(CancellationToken cancellationToken)
-    {
-        // File Transformation finishes its own startup around the same time; retry briefly
-        _ = Task.Run(
-            async () =>
-            {
-                Exception? last = null;
-                for (var attempt = 0; attempt < Attempts; attempt++)
-                {
-                    if (TryRegister(out last))
-                    {
-                        return;
-                    }
-
-                    await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
-                }
-
-                _logger.LogWarning(
-                    last,
-                    "Could not register with the File Transformation plugin; \"Discord status\" won't appear in jellyfin-web. Users can still link at /Jellycord/Link");
-            },
-            cancellationToken);
-        return Task.CompletedTask;
-    }
-
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    private bool TryRegister(out Exception? error)
-    {
-        error = null;
-        var assembly = AssemblyLoadContext.All
-            .SelectMany(c => c.Assemblies)
-            .FirstOrDefault(a => a.GetName().Name == "Jellyfin.Plugin.FileTransformation");
-        if (assembly is null)
+    public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
+        => app =>
         {
-            _logger.LogInformation("File Transformation plugin not installed; Jellycord's user page is only at /Jellycord/Link");
-            return true; // nothing to retry
+            app.UseMiddleware<IndexHtmlMiddleware>();
+            next(app);
+        };
+}
+
+/// <summary>Adds the web.js script tag to jellyfin-web's index.html as it is served.</summary>
+public sealed class IndexHtmlMiddleware
+{
+    private readonly RequestDelegate _next;
+
+    public IndexHtmlMiddleware(RequestDelegate next)
+    {
+        _next = next;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        if (!HttpMethods.IsGet(context.Request.Method)
+            || !IsIndexHtml(context.Request.Path)
+            || Plugin.Instance?.Configuration.InjectWebUi == false)
+        {
+            await _next(context).ConfigureAwait(false);
+            return;
         }
 
+        // Ask Jellyfin for the plain, full file: a 304 for the untouched file would let browsers keep
+        // a stale copy, and a compressed body can't be edited. index.html is a few KB.
+        var ifNoneMatch = context.Request.Headers.IfNoneMatch.ToString();
+        context.Request.Headers.Remove(HeaderNames.IfNoneMatch);
+        context.Request.Headers.Remove(HeaderNames.IfModifiedSince);
+        context.Request.Headers.Remove(HeaderNames.AcceptEncoding);
+
+        var original = context.Response.Body;
+        using var buffer = new MemoryStream();
+        context.Response.Body = buffer;
         try
         {
-            var register = assembly.GetType("Jellyfin.Plugin.FileTransformation.PluginInterface")
-                ?.GetMethod("RegisterTransformation", BindingFlags.Public | BindingFlags.Static);
-            var payloadType = register?.GetParameters().FirstOrDefault()?.ParameterType;
-            var parse = payloadType?.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static, [typeof(string)]);
-            if (register is null || parse is null)
-            {
-                _logger.LogWarning("Unsupported File Transformation version; skipping web UI injection");
-                return true;
-            }
-
-            var json = JsonSerializer.Serialize(new Dictionary<string, string>
-            {
-                ["id"] = TransformationId.ToString(),
-                ["fileNamePattern"] = "index\\.html$",
-                ["callbackAssembly"] = typeof(WebInjection).Assembly.FullName!,
-                ["callbackClass"] = typeof(IndexHtmlTransform).FullName!,
-                ["callbackMethod"] = nameof(IndexHtmlTransform.Transform),
-            });
-            register.Invoke(null, [parse.Invoke(null, [json])]);
-            _logger.LogInformation("Jellycord added to the jellyfin-web user menu via File Transformation");
-            return true;
+            await _next(context).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        finally
         {
-            // reflection wraps whatever File Transformation threw
-            error = ex is TargetInvocationException { InnerException: { } inner } ? inner : ex;
-            _logger.LogDebug(error, "File Transformation not ready yet");
-            return false;
+            context.Response.Body = original;
         }
+
+        if (context.Response.StatusCode != StatusCodes.Status200OK || context.Response.Headers.ContentEncoding.Count > 0)
+        {
+            buffer.Position = 0;
+            await buffer.CopyToAsync(original, context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+
+        var html = IndexHtmlTransform.Transform(Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length));
+        var bytes = Encoding.UTF8.GetBytes(html);
+
+        // our own validator for the edited page, so revalidation still gets cheap 304s
+        var etag = $"\"jc-{Convert.ToHexStringLower(SHA256.HashData(bytes))[..16]}\"";
+        context.Response.Headers.Remove(HeaderNames.LastModified);
+        context.Response.Headers.ETag = etag;
+        context.Response.Headers.CacheControl = "no-cache";
+        if (string.Equals(ifNoneMatch, etag, StringComparison.Ordinal))
+        {
+            context.Response.StatusCode = StatusCodes.Status304NotModified;
+            context.Response.ContentLength = 0;
+            return;
+        }
+
+        context.Response.ContentLength = bytes.Length;
+        await original.WriteAsync(bytes, context.RequestAborted).ConfigureAwait(false);
+    }
+
+    /// <summary>jellyfin-web's entry page, also under a base URL (/jellyfin/web/).</summary>
+    internal static bool IsIndexHtml(PathString path)
+    {
+        var p = path.Value ?? string.Empty;
+        return p.EndsWith("/web/", StringComparison.OrdinalIgnoreCase)
+               || p.EndsWith("/web/index.html", StringComparison.OrdinalIgnoreCase);
     }
 }
 
-/// <summary>Payload File Transformation hands to the callback.</summary>
-public sealed class TransformPayload
-{
-    public string? Contents { get; set; }
-}
-
-/// <summary>Invoked by File Transformation (by name, via reflection) whenever index.html is served.</summary>
+/// <summary>The edit itself: one script tag before &lt;/body&gt;.</summary>
 public static class IndexHtmlTransform
 {
-    private const string Marker = "Jellycord/web.js";
+    private const string Marker = "jellycord/web.js";
 
     /// <summary>Hash of the embedded script: a rebuilt web.js gets a new URL even without a version bump.</summary>
     private static readonly Lazy<string> ScriptHash = new(() =>
@@ -116,10 +107,9 @@ public static class IndexHtmlTransform
         return stream is null ? "0" : Convert.ToHexStringLower(SHA256.HashData(stream))[..12];
     });
 
-    public static string Transform(TransformPayload payload)
+    public static string Transform(string html)
     {
-        var html = payload.Contents ?? string.Empty;
-        if (Plugin.Instance?.Configuration.InjectWebUi == false || html.Contains(Marker, StringComparison.Ordinal))
+        if (html.Contains(Marker, StringComparison.OrdinalIgnoreCase))
         {
             return html;
         }

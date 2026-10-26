@@ -1,5 +1,5 @@
 /*
- * Jellycord web integration, injected into jellyfin-web by the File Transformation plugin.
+ * Jellycord web integration, added to jellyfin-web's index.html by the plugin (IndexHtmlMiddleware).
  * Adds "Discord status" to the user menu and the Settings page, and renders a native-looking
  * settings page at #/jellycord (inside jellyfin-web's fallback page).
  */
@@ -72,7 +72,9 @@
     }
 
     function injectSettingsLink() {
-        var anchor = document.querySelector('.lnkSubtitlePreferences') || document.querySelector('.lnkPlaybackPreferences');
+        // the user's own section of Settings (Profile ... Controls): ours goes at the end of it
+        var anchor = document.querySelector('#myPreferencesMenuPage .lnkSubtitlePreferences')
+            || document.querySelector('.lnkSubtitlePreferences') || document.querySelector('.lnkPlaybackPreferences');
         if (!anchor || anchor.parentElement.querySelector('.lnkJellycord')) { return; }
         var link = document.createElement('a');
         link.className = 'emby-button lnkJellycord listItem-border';
@@ -80,7 +82,7 @@
         link.style.cssText = 'display:block;margin:0;padding:0;';
         link.innerHTML = '<div class="listItem"><span class="material-icons listItemIcon listItemIcon-transparent ' + ICON +
             '" aria-hidden="true"></span><div class="listItemBody"><div class="listItemBodyText">' + LABEL + '</div></div></div>';
-        anchor.insertAdjacentElement('afterend', link);
+        anchor.parentElement.appendChild(link);
     }
 
     // ------------------------------------------------------------------ page
@@ -131,7 +133,7 @@
                 standaloneTimer = setTimeout(function () {
                     standaloneTimer = null;
                     if (onJellycordRoute() && !document.getElementById(ROOT_ID)) {
-                        location.href = client().getUrl('Jellycord/Link');
+                        location.href = client().getUrl('jellycord/link');
                     }
                 }, 3000);
             }
@@ -212,7 +214,7 @@
 
     function loadAccount(root) {
         var box = root.querySelector('#jcAccount');
-        api('GET', 'Jellycord/Me').then(function (me) {
+        api('GET', 'jellycord/me').then(function (me) {
             if (!me.configured) {
                 box.innerHTML = '<p>The server admin hasn\'t set up Discord yet.</p>';
                 return;
@@ -238,7 +240,7 @@
                     if (!window.confirm('Unlink Discord? Your status stops updating until you link again.')) { return; }
                     unlink.disabled = true;
                     setError(root, '');
-                    api('POST', 'Jellycord/Me/Unlink').then(function () { loadAccount(root); }, function (err) {
+                    api('POST', 'jellycord/me/unlink').then(function () { loadAccount(root); }, function (err) {
                         unlink.disabled = false;
                         errorText(err, 'Unlinking failed. Try again.').then(function (m) { setError(root, m); });
                     });
@@ -255,7 +257,7 @@
         // open the tab now, while we still have the click: a window.open after the request is often blocked
         var tab = window.open('about:blank', '_blank');
         if (tab) { tab.opener = null; }
-        api('POST', 'Jellycord/Me/Link').then(function (p) {
+        api('POST', 'jellycord/me/link').then(function (p) {
             if (tab) { tab.location.href = p.verificationUri; }
             box.innerHTML =
                 '<p>Open Discord and approve this code:</p>' +
@@ -274,7 +276,7 @@
 
     function poll(root) {
         if (!document.body.contains(root)) { stopPolling(); return; }
-        api('GET', 'Jellycord/Me/Link').then(function (r) {
+        api('GET', 'jellycord/me/link').then(function (r) {
             if (r.status === 'pending') { return; }
             stopPolling();
             if (r.status === 'failed') {
@@ -295,7 +297,7 @@
 
     function loadPrivacy(root) {
         var userId = client().getCurrentUserId();
-        Promise.all([api('GET', 'Jellycord/Me/Settings'), api('GET', 'UserViews?userId=' + encodeURIComponent(userId))]).then(function (r) {
+        Promise.all([api('GET', 'jellycord/me/settings'), api('GET', 'UserViews?userId=' + encodeURIComponent(userId))]).then(function (r) {
             var s = r[0].settings, admin = r[0].admin, views = r[1].Items || [];
             root.querySelector('#jcIntro').textContent = 'Show what you\'re watching on ' + (r[0].serverName || 'Jellyfin') + ' as your Discord status.';
             var adminLibs = (admin.privateLibraryIds || []).map(norm);
@@ -331,7 +333,7 @@
         var libs = Array.prototype.map.call(root.querySelectorAll('#jcLibs input:checked:not(:disabled)'), function (c) { return c.getAttribute('data-lib'); });
         btn.disabled = true;
         status.textContent = '';
-        api('POST', 'Jellycord/Me/Settings', {
+        api('POST', 'jellycord/me/settings', {
             AlwaysPrivate: root.querySelector('#jcAlways').checked,
             PrivateLibraryIds: libs,
             PrivateTags: root.querySelector('#jcTags').value

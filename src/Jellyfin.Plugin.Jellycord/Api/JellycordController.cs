@@ -15,7 +15,7 @@ namespace Jellyfin.Plugin.Jellycord.Api;
 /// Linking uses Discord's OAuth device flow, so Discord never needs to reach this server.
 /// </summary>
 [ApiController]
-[Route("Jellycord")]
+[Route("jellycord")]
 [Authorize]
 public class JellycordController : ControllerBase
 {
@@ -70,7 +70,7 @@ public class JellycordController : ControllerBase
     // ---------------------------------------------------------------- self-service
 
     /// <summary>Standalone page any user can open to link their own Discord.</summary>
-    [HttpGet("Link")]
+    [HttpGet("link")]
     [AllowAnonymous]
     public ActionResult GetLinkPage()
     {
@@ -87,7 +87,7 @@ public class JellycordController : ControllerBase
         return File(stream, "text/html; charset=utf-8");
     }
 
-    /// <summary>Script File Transformation injects into jellyfin-web (user menu entry + native page).</summary>
+    /// <summary>Script added to jellyfin-web's index.html (user menu and Settings entries, native page).</summary>
     [HttpGet("web.js")]
     [AllowAnonymous]
     public ActionResult GetWebScript()
@@ -104,7 +104,7 @@ public class JellycordController : ControllerBase
         return File(stream, "application/javascript; charset=utf-8");
     }
 
-    [HttpGet("Me")]
+    [HttpGet("me")]
     public ActionResult GetMe()
     {
         if (CallerId() is not { } id)
@@ -122,7 +122,7 @@ public class JellycordController : ControllerBase
         });
     }
 
-    [HttpPost("Me/Link")]
+    [HttpPost("me/link")]
     public async Task<ActionResult> StartLink(CancellationToken ct)
     {
         if (CallerId() is not { } id)
@@ -187,7 +187,7 @@ public class JellycordController : ControllerBase
         return Ok(pending.ToDto());
     }
 
-    [HttpGet("Me/Link")]
+    [HttpGet("me/link")]
     public async Task<ActionResult> PollLink(CancellationToken ct)
     {
         if (CallerId() is not { } id)
@@ -265,7 +265,7 @@ public class JellycordController : ControllerBase
     }
 
     /// <summary>The caller's privacy settings, plus the admin's rules so the page can show them.</summary>
-    [HttpGet("Me/Settings")]
+    [HttpGet("me/settings")]
     public ActionResult GetMySettings()
     {
         if (CallerId() is not { } id)
@@ -282,7 +282,7 @@ public class JellycordController : ControllerBase
         });
     }
 
-    [HttpPost("Me/Settings")]
+    [HttpPost("me/settings")]
     public ActionResult SetMySettings([FromBody] UserSettings settings)
     {
         if (CallerId() is not { } id)
@@ -308,13 +308,13 @@ public class JellycordController : ControllerBase
         return Ok(clean);
     }
 
-    [HttpPost("Me/Unlink")]
+    [HttpPost("me/unlink")]
     public async Task<ActionResult> UnlinkMe()
         => CallerId() is { } id ? await UnlinkCoreAsync(id).ConfigureAwait(false) : Unauthorized();
 
     // ---------------------------------------------------------------- admin
 
-    [HttpGet("Accounts")]
+    [HttpGet("accounts")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public ActionResult GetAccounts()
         => Ok(_store.GetAccounts().Select(a => new
@@ -325,12 +325,12 @@ public class JellycordController : ControllerBase
             needsRelink = NeedsRelink(a),
         }));
 
-    [HttpPost("Accounts/{userId}/Unlink")]
+    [HttpPost("accounts/{userId}/unlink")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public Task<ActionResult> Unlink([FromRoute] Guid userId) => UnlinkCoreAsync(userId);
 
     /// <summary>Shows what Discord would get for an item: the activity JSON, including which image is used.</summary>
-    [HttpGet("Preview/{itemId}")]
+    [HttpGet("preview/{itemId}")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public async Task<ActionResult> Preview([FromRoute] Guid itemId)
     {
@@ -352,12 +352,12 @@ public class JellycordController : ControllerBase
         return Ok(new { isPrivate = media.IsPrivate, imageSource = source, activity = activity?.ToJson(cfg.ClientId) });
     }
 
-    [HttpGet("ClientSecret")]
+    [HttpGet("clientsecret")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public ActionResult GetClientSecretState() => Ok(new { isSet = !string.IsNullOrEmpty(_store.ClientSecret) });
 
     /// <summary>Write-only: the secret is never sent back to a browser.</summary>
-    [HttpPost("ClientSecret")]
+    [HttpPost("clientsecret")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public ActionResult SetClientSecret([FromBody] SecretRequest request)
     {

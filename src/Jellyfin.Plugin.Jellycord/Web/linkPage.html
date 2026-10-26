@@ -137,7 +137,7 @@
 
     function loadPrivacy() {
         Promise.all([
-            api('GET', '/Jellycord/Me/Settings'),
+            api('GET', '/jellycord/me/settings'),
             userId ? api('GET', '/UserViews?userId=' + encodeURIComponent(userId)) : Promise.resolve({ Items: [] })
         ]).then(function (r) {
             var s = r[0].settings, admin = r[0].admin, views = (r[1].Items || []);
@@ -220,7 +220,7 @@
     }
 
     function refresh() {
-        return api('GET', '/Jellycord/Me').then(function (me) {
+        return api('GET', '/jellycord/me').then(function (me) {
             if (!me.configured) { return show('unconfigured'); }
             if (me.linked) {
                 $('discordName').textContent = me.discordName;
@@ -236,7 +236,7 @@
         // open the tab now, while we still have the click: a window.open after the request is often blocked
         var tab = window.open('about:blank', '_blank');
         if (tab) { tab.opener = null; }
-        api('POST', '/Jellycord/Me/Link').then(function (p) {
+        api('POST', '/jellycord/me/link').then(function (p) {
             if (tab) { tab.location.href = p.verificationUri; }
             $('userCode').textContent = p.userCode;
             $('verifyLink').href = p.verificationUri;
@@ -251,7 +251,7 @@
     }
 
     function poll() {
-        api('GET', '/Jellycord/Me/Link').then(function (r) {
+        api('GET', '/jellycord/me/link').then(function (r) {
             if (r.status === 'pending') { return; }
             clearInterval(pollTimer);
             if (r.status === 'failed') { fail('Linking failed' + (r.error ? ': ' + r.error : '.') + ' Try again.'); }
@@ -267,7 +267,7 @@
         if (!window.confirm('Unlink Discord? Your status stops updating until you link again.')) { return; }
         this.disabled = true;
         var btn = this;
-        api('POST', '/Jellycord/Me/Unlink').catch(function (e) { fail(e.message); }).then(function () {
+        api('POST', '/jellycord/me/unlink').catch(function (e) { fail(e.message); }).then(function () {
             btn.disabled = false;
             refresh();
         });
@@ -276,7 +276,7 @@
     $('saveBtn').onclick = function () {
         var libs = Array.prototype.map.call(document.querySelectorAll('#libs input:checked:not(:disabled)'), function (c) { return c.getAttribute('data-lib'); });
         fail('');
-        api('POST', '/Jellycord/Me/Settings', {
+        api('POST', '/jellycord/me/settings', {
             AlwaysPrivate: $('alwaysPrivate').checked, PrivateLibraryIds: libs, PrivateTags: $('tags').value
         }).then(function () {
             $('saved').textContent = 'Saved';

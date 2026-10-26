@@ -47,9 +47,9 @@ Dashboard → Plugins → **Jellycord**:
 
 ### 4. Link users
 
-**With the [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin installed (recommended):** users find **Discord status** in Jellyfin's own user menu (avatar → Discord status) and on the **Settings** page. It opens a native Jellyfin page where they link Discord and set their privacy options. You can turn this off in the plugin settings.
+Users find **Discord status** in Jellyfin's own user menu (avatar → Discord status) and at the end of the **Settings** page (Profile, Display, … Controls, Discord status). It opens a native Jellyfin page where they link Discord and set their privacy options. No other plugin is needed: Jellycord adds its script to jellyfin-web's `index.html` as the server sends it, without changing any files on disk. You can turn this off in the plugin settings.
 
-**Without it:** users open **`https://<your-jellyfin>/Jellycord/Link`** while signed in to Jellyfin web. The admin page shows the URL.
+Apps that don't use jellyfin-web (Android TV, Swiftfin, Findroid…) don't show the entry. On those, users open **`https://<your-jellyfin>/jellycord/link`** in a browser where they're signed in to Jellyfin web. The admin page shows the URL.
 
 Either way they click **Link Discord** and approve the code at `discord.com/activate`. Admins can see and unlink accounts on the plugin settings page.
 
@@ -78,7 +78,7 @@ An item is private if any of these match:
 - **Admin rules** (plugin settings, apply to everyone): private libraries, tags (default `nsfw, adult, xxx, hentai, porn`, including tags on the series or album) and parental ratings (default `XXX, X, AO, NC-17, R18, R18+, 18+`).
 - **User rules** (each user's link page): users can mark extra libraries or tags private for themselves, or turn on **Keep everything private** to only ever show "Watching Jellyfin". Users can add rules but can't remove the admin's.
 
-`GET /Jellycord/Preview/{itemId}` reports `isPrivate` under the admin rules.
+`GET /jellycord/preview/{itemId}` reports `isPrivate` under the admin rules.
 
 ### Posters on private servers
 
@@ -88,7 +88,7 @@ Discord fetches images from the internet, so it can't load posters from a server
 2. **Temporary upload (opt-in).** For items with no online match (home videos, unmatched files), you can let Jellycord upload the local poster to [Litterbox](https://litterbox.catbox.moe), which deletes it after 72 hours. This publishes that artwork to a third party, so it's off by default.
 3. **Fallback.** Otherwise the Jellycord logo is shown (or your own fallback image).
 
-Results are cached per item. To check what Discord would get for an item, call `GET /Jellycord/Preview/{itemId}` as an admin. It returns the activity JSON and which image source was used.
+Results are cached per item. To check what Discord would get for an item, call `GET /jellycord/preview/{itemId}` as an admin. It returns the activity JSON and which image source was used.
 
 Avoid exposing the whole server with Tailscale Funnel just for posters. Option 1 covers almost everything without opening anything up.
 
@@ -130,7 +130,7 @@ src/Jellyfin.Plugin.Jellycord/
   Presence/   PresenceMapper (item → activity), IPresenceSink
   Discord/    DiscordClient (OAuth device flow + headless-sessions), HeadlessSessionSink, CredentialStore
   Api/        JellycordController (link page + endpoints)
-  Web/        configPage.html (admin), linkPage.html (users), web.js + WebInjection (native jellyfin-web page via File Transformation)
+  Web/        configPage.html (admin), linkPage.html (users), web.js + WebInjection (middleware that adds web.js to jellyfin-web's index.html: user menu and Settings entries, native page)
 assets/               logo, banner, status icons (SVG sources + PNGs used by Discord and the catalog)
 spike/HeadlessSpike/   standalone API check
 docs/                  research report and notes
