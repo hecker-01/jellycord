@@ -1,5 +1,6 @@
-# Push a tag like v0.1.0 to build the plugin zip, attach it to a GitHub release,
-# and add the version to manifest.json (the Jellyfin plugin repository) on main.
+# Push a tag like v0.2.0 (matching <Version> in Directory.Build.props) to build the plugin zip,
+# attach it to a GitHub release, and add the version to manifest.json (the Jellyfin plugin
+# repository) on main. Safe to re-run: every step can be repeated after a partial failure.
 name: Release
 
 on:
@@ -9,62 +10,130 @@ on:
 permissions:
   contents: write
 
+# one release at a time, so two tags can't race on the manifest commit
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      # actions are pinned to commit SHAs (tags can be moved); Dependabot keeps them current
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: "10.0.x"
 
-      - name: Version from tag
+      # The tag name is only ever used through env vars, never pasted into a script.
+      - name: Check the tag
         id: v
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          echo "version=${tag}.0" >> "$GITHUB_OUTPUT"
-          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::Tag '$TAG' is not of the form vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          version="${TAG#v}.0"
+          declared=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props)
+          if [[ "$declared" != "$version" ]]; then
+            echo "::error::Tag $TAG means version $version, but Directory.Build.props says $declared. Bump it first."
+            exit 1
+          fi
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$TAG points at a commit that is not on main"
+            exit 1
+          fi
+          abi=$(sed -n 's/^targetAbi: "\(.*\)"/\1/p' build.yaml)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "abi=$abi" >> "$GITHUB_OUTPUT"
 
       - name: Build
         run: |
-          dotnet test Jellycord.sln -c Release
-          dotnet publish src/Jellyfin.Plugin.Jellycord -c Release -o out \
-            -p:Version=${{ steps.v.outputs.version }} \
-            -p:AssemblyVersion=${{ steps.v.outputs.version }} \
-            -p:FileVersion=${{ steps.v.outputs.version }}
+          dotnet restore Jellycord.sln --locked-mode
+          dotnet test Jellycord.sln -c Release --no-restore
+          dotnet publish src/Jellyfin.Plugin.Jellycord -c Release -o out --no-restore
 
       - name: Package
         id: pkg
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
-          zip="jellycord_${{ steps.v.outputs.version }}.zip"
-          (cd out && zip -j "../$zip" Jellyfin.Plugin.Jellycord.dll)
+          zip="jellycord_${VERSION}.zip"
+          (cd out && zip -j -X "../$zip" Jellyfin.Plugin.Jellycord.dll)
           echo "zip=$zip" >> "$GITHUB_OUTPUT"
           echo "md5=$(md5sum "$zip" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          ZIP: ${{ steps.pkg.outputs.zip }}
         run: |
-          gh release create "${{ steps.v.outputs.tag }}" "${{ steps.pkg.outputs.zip }}" \
-            --title "Jellycord ${{ steps.v.outputs.tag }}" --generate-notes
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" --clobber
+          else
+            gh release create "$TAG" "$ZIP" --title "Jellycord $TAG" --generate-notes --verify-tag
+          fi
 
       - name: Update manifest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.v.outputs.version }}
+          ABI: ${{ steps.v.outputs.abi }}
+          ZIP: ${{ steps.pkg.outputs.zip }}
+          MD5: ${{ steps.pkg.outputs.md5 }}
         run: |
-          git checkout main
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.v.outputs.tag }}/${{ steps.pkg.outputs.zip }}"
-          jq --arg v "${{ steps.v.outputs.version }}" \
-             --arg url "$url" \
-             --arg md5 "${{ steps.pkg.outputs.md5 }}" \
-             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-             --arg log "See https://github.com/${GITHUB_REPOSITORY}/releases/tag/${{ steps.v.outputs.tag }}" \
-             '.[0].versions = ([{version: $v, changelog: $log, targetAbi: "12.0.0.0", sourceUrl: $url, checksum: $md5, timestamp: $ts}]
-                + (.[0].versions | map(select(.version != $v))))' \
-             manifest.json > manifest.tmp && mv manifest.tmp manifest.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add manifest.json
-          git commit -m "manifest: add ${{ steps.v.outputs.version }}"
-          git push origin main
+          git checkout main
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP}"
+          # Jellyfin shows the changelog as-is: use the release notes, not a link to them
+          notes=$(gh release view "$TAG" --json body --jq .body | head -c 4000)
+          done_ok=false
+          for attempt in 1 2 3; do
+            git pull --rebase origin main
+            jq --arg v "$VERSION" --arg url "$url" --arg md5 "$MD5" --arg abi "$ABI" \
+               --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg log "${notes:-See https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}}" \
+               '.[0].versions = ([{version: $v, changelog: $log, targetAbi: $abi, sourceUrl: $url, checksum: $md5, timestamp: $ts}]
+                  + (.[0].versions | map(select(.version != $v))))' \
+               manifest.json > manifest.tmp && mv manifest.tmp manifest.json
+            if git diff --quiet manifest.json; then
+              echo "manifest.json already lists $VERSION"
+              done_ok=true
+              break
+            fi
+            git add manifest.json
+            git commit -m "manifest: add ${VERSION}"
+            if git push origin main; then
+              done_ok=true
+              break
+            fi
+            # someone pushed to main meanwhile: start over from their commit
+            git reset --hard origin/main
+            sleep 5
+          done
+          if [[ "$done_ok" != true ]]; then
+            echo "::error::Could not push the manifest update to main"
+            exit 1
+          fi
+
+      - name: Verify the published zip
+        env:
+          TAG: ${{ github.ref_name }}
+          ZIP: ${{ steps.pkg.outputs.zip }}
+          MD5: ${{ steps.pkg.outputs.md5 }}
+        run: |
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP}"
+          actual=$(curl -fsSL --retry 5 --retry-delay 5 "$url" | md5sum | cut -d' ' -f1)
+          if [[ "$actual" != "$MD5" ]]; then
+            echo "::error::$url has md5 $actual, but manifest.json says $MD5"
+            exit 1
+          fi

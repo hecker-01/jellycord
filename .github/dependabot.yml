@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: monthly
+    ignore:
+      # the plugin is built against the oldest Jellyfin it supports (see build.yaml targetAbi)
+      - dependency-name: "Jellyfin.*"
