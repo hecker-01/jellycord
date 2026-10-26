@@ -113,7 +113,7 @@
             '    <h3 class="checkboxListLabel" style="margin-top:1.5em">Private libraries</h3>' +
             '    <div id="jcLibs" class="checkboxList paperList" style="padding:.5em 1em"></div>' +
             '    <div class="inputContainer" style="margin-top:2em">' +
-            '      <input is="emby-input" type="text" id="jcTags" label="My private tags" />' +
+            '      <input is="emby-input" type="text" id="jcTags" label="My private tags" maxlength="1000" />' +
             '      <div class="fieldDescription">Comma-separated. Tags on a series or album apply to everything in it.</div>' +
             '    </div>' +
             '    <div class="fieldDescription" id="jcAdminRules"></div>' +

@@ -30,13 +30,27 @@ public static class PresenceMapper
             return null;
         }
 
+        // the per-kind toggles apply to private items too
+        var kindEnabled = media.Kind switch
+        {
+            MediaKind.Episode => cfg.ShowEpisodes,
+            MediaKind.Movie => cfg.ShowMovies,
+            MediaKind.Music => cfg.ShowMusic,
+            _ => false,
+        };
+        if (!kindEnabled)
+        {
+            return null;
+        }
+
         if (media.IsPrivate)
         {
-            // nothing about the item itself: no title, poster, progress or pause state
+            // nothing about the item itself: no title, poster, progress, pause state or even
+            // its kind (always Watching, never Listening)
             var logo = ResolveFallback(cfg);
             return new PresenceActivity
             {
-                Type = media.Kind == MediaKind.Music ? PresenceActivity.Listening : PresenceActivity.Watching,
+                Type = PresenceActivity.Watching,
                 Name = Fit(string.IsNullOrWhiteSpace(serverName) ? "Jellyfin" : serverName)!,
                 LargeImage = logo,
                 LargeText = logo is null ? null : Fit(serverName),
@@ -50,17 +64,17 @@ public static class PresenceMapper
 
         switch (media.Kind)
         {
-            case MediaKind.Episode when cfg.ShowEpisodes:
+            case MediaKind.Episode:
                 name = Coalesce(media.SeriesName, media.Title);
                 details = name;
                 state = EpisodeLine(media);
                 break;
-            case MediaKind.Movie when cfg.ShowMovies:
+            case MediaKind.Movie:
                 name = media.Title;
                 details = media.Title;
                 state = media.Year?.ToString(CultureInfo.InvariantCulture);
                 break;
-            case MediaKind.Music when cfg.ShowMusic:
+            case MediaKind.Music:
                 type = PresenceActivity.Listening;
                 name = media.Title;
                 details = media.Title;

@@ -32,7 +32,8 @@ public sealed class UserSettings
 
 /// <summary>
 /// Secrets kept out of the plugin XML config (which the dashboard can read back):
-/// the Discord client secret and every user's OAuth tokens. Stored as an owner-only JSON file.
+/// the Discord client secret and every user's OAuth tokens. Stored as a JSON file that is owner-only
+/// (mode 0600) on Linux and macOS; on Windows it inherits the folder's permissions.
 /// </summary>
 public sealed class CredentialStore
 {
@@ -42,6 +43,12 @@ public sealed class CredentialStore
     private readonly ILogger<CredentialStore> _logger;
     private readonly Lock _lock = new();
     private Data _data;
+
+    /// <summary>
+    /// Set when the file exists but couldn't be read. Saving would overwrite every link and the
+    /// client secret, so writes are refused until the file is fixed and Jellyfin restarted.
+    /// </summary>
+    private bool _readFailed;
 
     public CredentialStore(IApplicationPaths paths, ILogger<CredentialStore> logger)
     {
@@ -149,29 +156,62 @@ public sealed class CredentialStore
 
     private Data Load()
     {
-        try
+        if (!File.Exists(_path))
         {
-            if (File.Exists(_path))
-            {
-                return JsonSerializer.Deserialize<Data>(File.ReadAllText(_path)) ?? new Data();
-            }
-        }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
-        {
-            _logger.LogError(ex, "Could not read {Path}; starting with no linked accounts", _path);
+            return new Data();
         }
 
+        try
+        {
+            return JsonSerializer.Deserialize<Data>(File.ReadAllText(_path)) ?? new Data();
+        }
+        catch (JsonException ex)
+        {
+            // unparseable: keep it aside for manual recovery rather than overwriting it on the next save
+            var aside = $"{_path}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}";
+            try
+            {
+                File.Move(_path, aside);
+                _logger.LogError(ex, "Could not parse {Path}; moved it to {Aside} and starting with no linked accounts", _path, aside);
+                return new Data();
+            }
+            catch (Exception moveEx) when (moveEx is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogError(ex, "Could not parse {Path} or move it aside; not saving any changes to it", _path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError(ex, "Could not read {Path}; not saving any changes to it until it is readable and Jellyfin restarted", _path);
+        }
+
+        _readFailed = true;
         return new Data();
     }
 
     private void SaveLocked()
     {
+        if (_readFailed)
+        {
+            throw new IOException($"Not overwriting {_path}: it could not be read at startup");
+        }
+
         var tmp = _path + ".tmp";
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        File.WriteAllText(tmp, JsonSerializer.Serialize(_data, JsonOptions));
+
+        // create the file owner-only from the start, so the secrets are never briefly world-readable
+        // (the create mode only applies to new files, hence the delete)
+        File.Delete(tmp);
+        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
         if (!OperatingSystem.IsWindows())
         {
-            File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+
+        using (var stream = new FileStream(tmp, options))
+        {
+            JsonSerializer.Serialize(stream, _data, JsonOptions);
+            stream.Flush(flushToDisk: true);
         }
 
         File.Move(tmp, _path, overwrite: true);

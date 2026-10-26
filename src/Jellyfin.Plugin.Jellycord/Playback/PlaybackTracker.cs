@@ -1,6 +1,7 @@
 using Jellyfin.Plugin.Jellycord.Discord;
 using Jellyfin.Plugin.Jellycord.Presence;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Hosting;
@@ -135,6 +136,25 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
         }
     }
 
+    /// <summary>Fails closed: if the rules can't be checked, the item is treated as private.</summary>
+    private bool IsPrivate(BaseItem item, Guid userId)
+    {
+        if (Plugin.Instance?.Configuration is not { } cfg)
+        {
+            return true;
+        }
+
+        try
+        {
+            return _privacy!.IsPrivate(item, cfg, _store?.GetSettings(userId));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Privacy check failed for item {ItemId}; treating it as private", item.Id);
+            return true;
+        }
+    }
+
     internal void OnPlaybackProgress(object? sender, PlaybackProgressEventArgs e)
     {
         if (e.Item is null || e.Session is null || e.Session.UserId == Guid.Empty)
@@ -148,7 +168,7 @@ public sealed class PlaybackTracker : IHostedService, IDisposable
             return;
         }
 
-        if (_privacy is not null && Plugin.Instance?.Configuration is { } cfg && _privacy.IsPrivate(e.Item, cfg, _store?.GetSettings(e.Session.UserId)))
+        if (_privacy is not null && IsPrivate(e.Item, e.Session.UserId))
         {
             media = media with { IsPrivate = true };
         }

@@ -101,14 +101,25 @@
             var bools = ['ShowMovies', 'ShowEpisodes', 'ShowMusic', 'ShowWhenPaused', 'ShowStatusIcon', 'UploadArtwork', 'InjectWebUi'];
             var texts = ['ClientId', 'PublicUrl', 'FallbackImage', 'PrivateTags', 'PrivateRatings'];
 
+            // Save only rewrites PrivateLibraryIds once the checkboxes have rendered; otherwise an
+            // empty or failed list would silently make every private library public.
+            var librariesLoaded = false;
+
+            function norm(id) { return String(id || '').replace(/-/g, '').toLowerCase(); }
+
             function renderLibraries(selected) {
+                var el = page.querySelector('#PrivateLibraries');
+                var mine = selected.map(norm);
+                librariesLoaded = false;
                 ApiClient.getVirtualFolders().then(function (folders) {
-                    var el = page.querySelector('#PrivateLibraries');
                     if (!folders.length) { el.innerHTML = '<span class="fieldDescription">No libraries.</span>'; return; }
                     el.innerHTML = folders.map(function (f) {
                         return '<label class="checkboxContainer"><input is="emby-checkbox" type="checkbox" data-lib="' + esc(f.ItemId) + '"' +
-                            (selected.indexOf(f.ItemId) >= 0 ? ' checked' : '') + ' /><span>' + esc(f.Name) + '</span></label>';
+                            (mine.indexOf(norm(f.ItemId)) >= 0 ? ' checked' : '') + ' /><span>' + esc(f.Name) + '</span></label>';
                     }).join('');
+                    librariesLoaded = true;
+                }, function () {
+                    el.innerHTML = '<span class="fieldDescription">Could not load libraries. Saving keeps the current private libraries; reload to change them.</span>';
                 });
             }
 
@@ -179,12 +190,17 @@
                     texts.forEach(function (k) { config[k] = page.querySelector('#' + k).value.trim(); });
                     bools.forEach(function (k) { config[k] = page.querySelector('#' + k).checked; });
                     config.ClearDelaySeconds = parseInt(page.querySelector('#ClearDelaySeconds').value, 10) || 0;
-                    config.PrivateLibraryIds = Array.prototype.map.call(
-                        page.querySelectorAll('[data-lib]:checked'), function (c) { return c.getAttribute('data-lib'); });
+                    if (librariesLoaded) {
+                        config.PrivateLibraryIds = Array.prototype.map.call(
+                            page.querySelectorAll('[data-lib]:checked'), function (c) { return c.getAttribute('data-lib'); });
+                    }
                     return Promise.all([ApiClient.updatePluginConfiguration(pluginId, config), saveSecret]);
                 }).then(function (r) {
                     page.querySelector('#ClientSecret').value = '';
                     Dashboard.processPluginConfigurationUpdateResult(r[0]);
+                }, function () {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert('Saving failed. Your changes were not stored.');
                 });
                 return false;
             });

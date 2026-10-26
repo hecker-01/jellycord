@@ -49,8 +49,18 @@ public class PrivacyTests
     }
 
     [Fact]
-    public void PrivateMusic_IsListening()
-        => Assert.Equal(PresenceActivity.Listening, PresenceMapper.Map(Private(MediaKind.Music), 0, false, 0, new PluginConfiguration(), null, "x")!.Type);
+    public void PrivateMusic_DoesNotRevealItsKind()
+        => Assert.Equal(PresenceActivity.Watching, PresenceMapper.Map(Private(MediaKind.Music), 0, false, 0, new PluginConfiguration(), null, "x")!.Type);
+
+    [Theory]
+    [InlineData(MediaKind.Music)]
+    [InlineData(MediaKind.Movie)]
+    [InlineData(MediaKind.Episode)]
+    public void PrivateItem_RespectsKindToggle(MediaKind kind)
+    {
+        var cfg = new PluginConfiguration { ShowMusic = false, ShowMovies = false, ShowEpisodes = false };
+        Assert.Null(PresenceMapper.Map(Private(kind), 0, false, 0, cfg, null, "x"));
+    }
 
     [Theory]
     [InlineData("XXX", "XXX")]

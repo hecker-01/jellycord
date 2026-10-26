@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using Jellyfin.Plugin.Jellycord.Configuration;
 using Jellyfin.Plugin.Jellycord.Discord;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Jellycord.Playback;
 
@@ -12,10 +14,13 @@ namespace Jellyfin.Plugin.Jellycord.Playback;
 public sealed class PrivacyFilter
 {
     private readonly ILibraryManager _libraryManager;
+    private readonly ILogger<PrivacyFilter> _logger;
+    private readonly ConcurrentDictionary<string, byte> _warnedIds = new(StringComparer.Ordinal);
 
-    public PrivacyFilter(ILibraryManager libraryManager)
+    public PrivacyFilter(ILibraryManager libraryManager, ILogger<PrivacyFilter> logger)
     {
         _libraryManager = libraryManager;
+        _logger = logger;
     }
 
     /// <param name="user">The viewer's own choices, which add to the admin's rules.</param>
@@ -81,5 +86,19 @@ public sealed class PrivacyFilter
             : s;
     }
 
-    private static Guid ParseGuid(string s) => Guid.TryParse(s, out var g) ? g : Guid.Empty;
+    private Guid ParseGuid(string s)
+    {
+        if (Guid.TryParse(s, out var g))
+        {
+            return g;
+        }
+
+        // a typo here means a library the admin meant to hide is shown; say so once per value
+        if (_warnedIds.TryAdd(s, 0))
+        {
+            _logger.LogWarning("Ignoring private library id {Id}: not a valid id, so it hides nothing", s);
+        }
+
+        return Guid.Empty;
+    }
 }

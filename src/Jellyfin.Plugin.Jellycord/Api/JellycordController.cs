@@ -19,6 +19,8 @@ namespace Jellyfin.Plugin.Jellycord.Api;
 [Authorize]
 public class JellycordController : ControllerBase
 {
+    internal const int MaxPrivateTagsLength = 1000;
+
     private static readonly ConcurrentDictionary<Guid, PendingLink> Pending = new();
 
     private readonly DiscordClient _discord;
@@ -245,11 +247,18 @@ public class JellycordController : ControllerBase
             return Unauthorized();
         }
 
+        // reject rather than trim: silently dropping private tags would make those items public
+        var tags = (settings.PrivateTags ?? string.Empty).Trim();
+        if (tags.Length > MaxPrivateTagsLength)
+        {
+            return BadRequest(new { error = $"Private tags are limited to {MaxPrivateTagsLength} characters." });
+        }
+
         var clean = new UserSettings
         {
             AlwaysPrivate = settings.AlwaysPrivate,
             PrivateLibraryIds = (settings.PrivateLibraryIds ?? []).Where(s => Guid.TryParse(s, out _)).Distinct().Take(100).ToArray(),
-            PrivateTags = (settings.PrivateTags ?? string.Empty).Trim() is { Length: <= 1000 } t ? t : string.Empty,
+            PrivateTags = tags,
         };
         _store.SetSettings(id, clean);
         _tracker.Invalidate(id);
