@@ -287,7 +287,7 @@
 
     findToken().then(function (token) {
         if (!token) { return show('signin'); }
-        auth = 'MediaBrowser Client="Jellycord", Device="Browser", DeviceId="' + deviceId() + '", Version="0.2.2", Token="' + token + '"';
+        auth = 'MediaBrowser Client="Jellycord", Device="Browser", DeviceId="' + deviceId() + '", Version="0.2.3", Token="' + token + '"';
         return refresh().then(function () {
             if ($('unconfigured').hidden) { loadPrivacy(); }
         });
